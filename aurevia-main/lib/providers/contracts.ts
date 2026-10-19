@@ -26,6 +26,7 @@ export type ProviderOrder={
 	providerOrderId:string;
 	clientOrderId:string;
 	state:ProviderOrderState;
+	providerStatus?:string;
 	acceptedAt:string;
 	updatedAt:string;
 	executions:ProviderExecution[];

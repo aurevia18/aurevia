@@ -18,6 +18,8 @@ type Order = {
   filledQuantity: number;
   price?: number;
   stopPrice?: number;
+  providerName?: string|null;
+  providerStatus?: string|null;
   instrument: { symbol: string };
 };
 type Pos = {
@@ -163,7 +165,11 @@ export default function Trade() {
         body: JSON.stringify(body),
       });
       const result = await response.json();
-      setMsg(response.ok ? "Order accepted" : result.error || "Order failed");
+      setMsg(response.ok
+        ? accountMode==='REAL'
+          ? `Alpaca Paper order ${String(result.providerStatus||result.status||'submitted').replaceAll('_',' ')}. Aurevia REAL balances and positions were not changed.`
+          : "Simulated order accepted"
+        : result.error || "Order failed");
       if (response.ok) {
         setOrders((current) => [result, ...current]);
         const positionResponse = await fetch("/api/positions");
@@ -181,10 +187,13 @@ export default function Trade() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ orderId: id }),
     });
-    if (r.ok)
-      setOrders((o) =>
-        o.map((x) => (x.id === id ? { ...x, status: "CANCELLED" } : x)),
-      );
+    if (r.ok) {
+      const updated=await r.json();
+      setOrders((current)=>current.map((order)=>order.id===id?{...order,...(updated.id?updated:{status:"CANCELLED"})}:order));
+    } else {
+      const result=await r.json();
+      setMsg(result.error||"Unable to cancel order");
+    }
   }
   async function close(id: string) {
     const r = await fetch("/api/positions", {
@@ -200,9 +209,9 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>Orders and positions in both account modes use simulated execution; no external trades are placed.</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':`${accountMode} · SIMULATED`}</span></header>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='REAL'?'REAL-side orders are sent to the shared Alpaca Paper account; paper fills never change Aurevia REAL balances or positions.':'DEMO orders use Aurevia virtual balances and simulated execution.'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL · PAPER / SIMULATED':'DEMO · SIMULATED'}</span></header>
         {(accountMode==='REAL'||accountMode==='DEMO')?<>
-        {accountMode==='REAL'&&<div className="account-callout mb-4" role="status"><span>REAL account balance and trades are simulated ledger activity. No external orders are placed and no money is transferred.</span></div>}
+        {accountMode==='REAL'&&<div className="account-callout mb-4" role="status"><span>Paper order requests use the shared Alpaca Paper account. Aurevia REAL balances and internal positions remain separate and are not changed by paper orders. The chart price is Aurevia’s indicative simulated price; Alpaca determines paper execution price. No live brokerage, deposits, withdrawals, or money movement are enabled.</span></div>}
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">
             <div className="trade-market-select" role="group" aria-label={translate('selectAnInstrument')}>
@@ -265,7 +274,7 @@ export default function Trade() {
             </div>
           </section>
           <section className="card p-5">
-            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">Simulated order estimate</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode} · SIMULATED</span></div>
+            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Alpaca Paper order request · indicative price only':'Simulated order estimate'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='REAL'?'PAPER · SIMULATED':'DEMO · SIMULATED'}</span></div>
             <form onSubmit={place} className="space-y-3">
               <fieldset className="space-y-3">
               <div className="grid grid-cols-2 gap-2" role="group" aria-label={translate('orderSide')}>
@@ -285,24 +294,24 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP">Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
-              <p className="trade-estimate-note">Orders use simulated execution and do not reach an external broker or exchange.</p>
+              <div className="trade-estimate" aria-live="polite">{accountMode==='REAL'?<div><span>Aurevia REAL ledger balance (not Alpaca buying power)</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>:<div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>}<div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
+              <p className="trade-estimate-note">{accountMode==='REAL'?'Estimate uses Aurevia’s simulated quote and fee schedule. Alpaca Paper validates orders and reports its own fill; no paper amounts enter the Aurevia ledger.':'DEMO orders use simulated execution and do not reach an external broker or exchange.'}</p>
               <button type="submit" disabled={placing||!selected} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>
               {msg&&<p className="text-sm muted" role="status">{msg}</p>}
             </form>
             <div className="mt-6">
               <h3 className="font-bold">Open orders</h3>
-              {orders.filter((o) => o.status === "OPEN").length ? (
+              {orders.filter((o) => o.status === "OPEN"||o.status==="PARTIALLY_FILLED").length ? (
                 orders
-                  .filter((o) => o.status === "OPEN")
+                  .filter((o) => o.status === "OPEN"||o.status==="PARTIALLY_FILLED")
                   .map((o) => (
                     <div
                       key={o.id}
                       className="flex justify-between border-b border-white/10 py-2 text-xs"
                     >
                       <span>
-                        {o.instrument.symbol} {o.side} {o.type}
+                        {o.instrument.symbol} {o.side} {o.type}{o.providerName==='alpaca-paper'?' · PAPER / SIMULATED':''}
                       </span>
                       <button type="button" onClick={() => cancel(o.id)} className="gold">
                         {translate('cancel')}
@@ -316,7 +325,7 @@ export default function Trade() {
           </section>
         </div>
         <section className="card mt-4 p-5">
-          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{translate('unrealizedPnl')}</p></div><span className="status-pill">{positions.length} open</span></div>
+          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Aurevia internal simulated positions; separate from Alpaca Paper.':translate('unrealizedPnl')}</p></div><span className="status-pill">{positions.length} open</span></div>
           {positions.length ? (
             <div className="mt-3 space-y-2">
               {positions.map((p) => (
@@ -341,7 +350,7 @@ export default function Trade() {
           )}
         </section>
         <section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>{translate('orderHistory')}</h2><p className="account-panel-subtitle">{translate('recentSubmittedOrders')}</p></div><RefreshCw size={17} className="gold" aria-hidden="true"/></div>
-          {orders.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>Instrument</th><th>Side</th><th>Type</th><th>Quantity</th><th>Limit / stop</th><th>Status</th></tr></thead><tbody>{orders.slice(0,20).map(order=><tr key={order.id}><td>{order.instrument.symbol}</td><td>{order.side}</td><td>{order.type}</td><td>{Number(order.quantity).toLocaleString()}</td><td>{order.type==='LIMIT'?Number(order.price||0).toLocaleString(undefined,{maximumFractionDigits:6}):order.type==='STOP'?Number(order.stopPrice||0).toLocaleString(undefined,{maximumFractionDigits:6}):translate('market')}</td><td><span className="status-pill">{order.status.replaceAll('_',' ')}</span></td></tr>)}</tbody></table></div>:<div className="account-empty">{translate('noOrdersRecorded')}</div>}
+          {orders.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>Instrument</th><th>Side</th><th>Type</th><th>Quantity</th><th>Limit / stop</th><th>Status</th></tr></thead><tbody>{orders.slice(0,20).map(order=><tr key={order.id}><td>{order.instrument.symbol}</td><td>{order.side}</td><td>{order.type}</td><td>{Number(order.quantity).toLocaleString()}</td><td>{order.type==='LIMIT'?Number(order.price||0).toLocaleString(undefined,{maximumFractionDigits:6}):order.type==='STOP'?Number(order.stopPrice||0).toLocaleString(undefined,{maximumFractionDigits:6}):translate('market')}</td><td><span className="status-pill">{order.providerName==='alpaca-paper'?'PAPER / SIMULATED · ':''}{order.providerStatus||order.status.replaceAll('_',' ')}</span></td></tr>)}</tbody></table></div>:<div className="account-empty">{translate('noOrdersRecorded')}</div>}
         </section>
         </>:<div className="account-empty" role="status">{translate('restoringAccountSession')}</div>}
       </main>

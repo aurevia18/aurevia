@@ -47,6 +47,7 @@ export type ServerConfiguration = {
   };
   execution: {
     realEnabled: boolean;
+    alpacaPaperOrdersEnabled: boolean;
     provider: string | null;
     alpacaProvider: string;
     brokerProvider: string;
@@ -204,6 +205,7 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
     },
     execution: {
       realEnabled: booleanEnv('REAL_EXECUTION_ENABLED', source),
+      alpacaPaperOrdersEnabled: booleanEnv('ALPACA_PAPER_ORDERS_ENABLED', source),
       provider: executionProvider || null,
       alpacaProvider,
       brokerProvider,

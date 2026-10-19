@@ -400,6 +400,7 @@ model Order {
   fee                  Decimal     @default(0) @db.Decimal(30, 10)
   idempotencyKey       String?     @unique
   providerName         String?
+  providerAccountId    String?
   providerOrderId      String?     @unique
   providerStatus       String?
   providerAcceptedAt   DateTime?

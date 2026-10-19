@@ -1,6 +1,7 @@
 'use client';
 
 import {FormEvent,useCallback,useEffect,useMemo,useState} from 'react';
+import Link from 'next/link';
 import {ArrowDownRight,ArrowUpRight,LoaderCircle,RefreshCw,TrendingUp} from 'lucide-react';
 import {formatUsd} from '@/lib/currency-format';
 
@@ -21,6 +22,7 @@ export default function DashboardCryptoTrade({accountMode,cash,onTradeComplete}:
  const [notice,setNotice]=useState('');
 
  const load=useCallback(async()=>{
+  if(accountMode==='REAL'){setLoading(false);return;}
   try{
    const [marketResponse,positionResponse]=await Promise.all([fetch('/api/market',{cache:'no-store'}),fetch('/api/positions',{cache:'no-store'})]);
    const [marketResult,positionResult]=await Promise.all([marketResponse.json(),positionResponse.json()]);
@@ -66,6 +68,12 @@ export default function DashboardCryptoTrade({accountMode,cash,onTradeComplete}:
   }catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit the simulated order.');}
   finally{setSubmitting(false);}
  }
+
+ if(accountMode==='REAL')return <section className="dashboard-panel card dashboard-crypto-trade" aria-labelledby="dashboard-crypto-title">
+  <div className="dashboard-panel-title"><div><h2 id="dashboard-crypto-title"><TrendingUp size={15} className="gold"/>Alpaca Paper orders</h2><p>REAL-side orders use the shared Alpaca Paper account.</p></div><span className="status-pill mode-real">PAPER · SIMULATED</span></div>
+  <p className="mt-3 text-sm muted">Paper orders do not change your Aurevia REAL ledger balance or positions. Paper account funds and results are shared provider-side simulation, not personal real funds.</p>
+  <Link className="btn mt-3 inline-flex bg-gold text-black" href="/trade">Open paper order ticket</Link>
+ </section>;
 
  return <section className="dashboard-panel card dashboard-crypto-trade" aria-labelledby="dashboard-crypto-title">
   <div className="dashboard-panel-title"><div><h2 id="dashboard-crypto-title"><TrendingUp size={15} className="gold"/>Simulated crypto trading</h2><p>Market orders use your {accountMode} simulated cash and positions.</p></div><span className={`status-pill ${accountMode==='DEMO'?'mode-demo':'mode-real'}`}>{accountMode} · SIMULATED</span></div>

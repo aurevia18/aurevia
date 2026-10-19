@@ -50,5 +50,7 @@ services:
         sync: false
       - key: ALPACA_SECRET_KEY
         sync: false
+      - key: ALPACA_PAPER_ORDERS_ENABLED
+        value: "true"
       - key: REAL_EXECUTION_ENABLED
         value: "false"

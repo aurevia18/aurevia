@@ -136,6 +136,7 @@ describe('canonical environment configuration',()=>{
       ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets',
       ALPACA_API_KEY:'paper-key',
       ALPACA_SECRET_KEY:'paper-secret',
+      ALPACA_PAPER_ORDERS_ENABLED:'true',
     });
 
     expect(config.execution.provider).toBe('alpaca');
@@ -145,12 +146,18 @@ describe('canonical environment configuration',()=>{
     expect(config.execution.alpacaTradingApiSecret).toBe('paper-secret');
     expect(config.execution.alpacaTradingAccountId).toBe('');
     expect(config.execution.realEnabled).toBe(false);
+    expect(config.execution.alpacaPaperOrdersEnabled).toBe(true);
   });
 
   it('supports the legacy Alpaca API secret alias without exposing it publicly',()=>{
     const config=getServerConfiguration({ALPACA_API_SECRET:'legacy-paper-secret'});
     expect(config.execution.alpacaTradingApiSecret).toBe('legacy-paper-secret');
     expect(JSON.stringify(getPublicConfiguration({ALPACA_API_SECRET:'legacy-paper-secret'}))).not.toContain('legacy-paper-secret');
+  });
+
+  it('keeps paper order submission disabled unless explicitly enabled',()=>{
+    expect(getServerConfiguration({ALPACA_PROVIDER:'alpaca',ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets',ALPACA_API_KEY:'paper-key',ALPACA_SECRET_KEY:'paper-secret'}).execution.alpacaPaperOrdersEnabled).toBe(false);
+    expect(getServerConfiguration({ALPACA_PAPER_ORDERS_ENABLED:'true'}).execution.alpacaPaperOrdersEnabled).toBe(true);
   });
 
   it('normalizes only approved HTTPS Alpaca Trading API hosts',()=>{

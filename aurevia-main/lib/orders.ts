@@ -13,7 +13,7 @@ function executable(type:OrderType,side:OrderSide,market:number,price?:number,st
  return stopPrice!==undefined&&(side===OrderSide.BUY?market>=stopPrice:market<=stopPrice);
 }
 
-function matchesOrder(order:Awaited<ReturnType<typeof db.order.findUnique>>|null,userId:string,accountMode:AccountMode,input:PlaceOrderInput){
+export function matchesOrder(order:Awaited<ReturnType<typeof db.order.findUnique>>|null,userId:string,accountMode:AccountMode,input:PlaceOrderInput){
  return !!order&&order.userId===userId&&order.accountMode===accountMode&&order.instrumentId===input.instrumentId&&order.side===input.side&&order.type===input.type&&order.quantity.equals(input.quantity)&&((order.price===null&&input.price===undefined)||(!!order.price&&order.price.equals(input.price||0)))&&((order.stopPrice===null&&input.stopPrice===undefined)||(!!order.stopPrice&&order.stopPrice.equals(input.stopPrice||0)));
 }
 
@@ -143,7 +143,7 @@ export async function placeOrder(userId:string,accountMode:AccountMode,input:Pla
 }
 
 export async function processOpenOrders(){
- const orders=await db.order.findMany({where:{status:OrderStatus.OPEN,accountMode:{in:[AccountMode.DEMO,AccountMode.REAL]}},include:{instrument:true},take:500,orderBy:{createdAt:'asc'}});
+ const orders=await db.order.findMany({where:{status:OrderStatus.OPEN,accountMode:AccountMode.DEMO},include:{instrument:true},take:500,orderBy:{createdAt:'asc'}});
  for(const o of orders){
    const p=Number(o.instrument.price); const hit=executable(o.type,o.side,p,o.price===null?undefined:Number(o.price),o.stopPrice===null?undefined:Number(o.stopPrice));
    if(!hit)continue;

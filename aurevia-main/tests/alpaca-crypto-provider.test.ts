@@ -37,16 +37,14 @@ describe('Alpaca crypto provider safety',()=>{
 		expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['https://paper-api.alpaca.markets/v2/account','https://paper-api.alpaca.markets/v2/positions']);
 	});
 
-	it('reports real paper account connectivity without enabling execution or exposing account data',async()=>{
+	it('reports paper account connectivity and paper-only account information without enabling live execution',async()=>{
 		for(const [name,value] of Object.entries({ALPACA_PROVIDER:'alpaca',ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets/v2',ALPACA_API_KEY:'test-key',ALPACA_SECRET_KEY:'test-secret',REAL_EXECUTION_ENABLED:'false'}))vi.stubEnv(name,value);
 		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'private-paper-account',status:'ACTIVE',currency:'USD',cash:'987654321',buying_power:'987654321',equity:'987654321',portfolio_value:'987654321',pattern_day_trader:false,trade_suspended_by_user:false,trading_blocked:false,account_blocked:false}),{status:200}));
 		vi.stubGlobal('fetch',fetcher);
 
 		const health=await getAlpacaPaperAccountHealth();
 
-		expect(health).toMatchObject({status:'AVAILABLE',connected:true,configured:true,selected:true,mode:'PAPER',executionEnabled:false,liveTradingEnabled:false});
-		expect(JSON.stringify(health)).not.toContain('private-paper-account');
-		expect(JSON.stringify(health)).not.toContain('987654321');
+		expect(health).toMatchObject({status:'AVAILABLE',connected:true,configured:true,selected:true,mode:'PAPER',executionEnabled:false,paperOrdersEnabled:false,liveTradingEnabled:false,account:{accountId:'private-paper-account',cash:'987654321',equity:'987654321',buyingPower:'987654321'}});
 		expect(fetcher).toHaveBeenCalledOnce();
 		expect(fetcher.mock.calls[0][0]).toBe('https://paper-api.alpaca.markets/v2/account');
 		expect(fetcher.mock.calls[0][1].method).toBeUndefined();
