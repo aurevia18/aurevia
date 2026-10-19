@@ -428,6 +428,46 @@ export function createIndividualTradingApiProviderFromEnvironment() {
   });
 }
 
+export async function getAlpacaPaperAccountHealth() {
+  const config = getServerConfiguration().execution;
+  const selected = config.alpacaProvider.toLowerCase() === 'alpaca';
+  const paperEndpoint = config.alpacaTradingUrlValid && new URL(config.alpacaTradingBaseUrl).hostname === 'paper-api.alpaca.markets';
+  const configured = config.alpacaTradingConfigured && paperEndpoint;
+  const hasAlpacaConfiguration = Boolean(
+    config.alpacaTradingUrlConfigured ||
+    config.alpacaTradingApiKey ||
+    config.alpacaTradingApiSecret,
+  );
+  let status: 'AVAILABLE' | 'AUTHENTICATION_FAILED' | 'UNAVAILABLE' | 'NOT_CONFIGURED' | 'NOT_SELECTED' | 'MISCONFIGURED';
+
+  if (!hasAlpacaConfiguration) {
+    status = 'NOT_CONFIGURED';
+  } else if (!selected) {
+    status = 'NOT_SELECTED';
+  } else if (!configured) {
+    status = 'MISCONFIGURED';
+  } else {
+    const provider = createIndividualTradingApiProviderFromEnvironment();
+    if (!provider) {
+      status = 'MISCONFIGURED';
+    } else {
+      const health = await provider.healthCheck();
+      status = health.connected ? 'AVAILABLE' : health.status ?? 'UNAVAILABLE';
+    }
+  }
+
+  return {
+    status,
+    connected: status === 'AVAILABLE',
+    configured,
+    selected,
+    mode: paperEndpoint ? 'PAPER' as const : null,
+    executionEnabled: false as const,
+    liveTradingEnabled: false as const,
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 export function createAlpacaCryptoProviderFromEnvironment() {
   const config = getServerConfiguration().execution;
   if (!config.realEnabled || !config.brokerProvider || !config.alpacaBrokerConfigured) return null;

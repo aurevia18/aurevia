@@ -3,17 +3,22 @@ import {requireAdmin} from '@/lib/auth';
 import {getLiveMarketProviderStatus} from '@/lib/live-market';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getInternalSimulationHealth} from '@/lib/providers/simulation-health';
+import {getAlpacaPaperAccountHealth} from '@/lib/providers/alpaca-crypto-provider';
 
 export const dynamic='force-dynamic';
 
 export async function GET(){
 	try{
 		await requireAdmin();
-		const health=await getInternalSimulationHealth(true);
-		const marketProvider=await getLiveMarketProviderStatus(getServerConfiguration().marketData.finnhubApiKey);
+		const [health,marketProvider,alpacaPaperAccount]=await Promise.all([
+			getInternalSimulationHealth(true),
+			getLiveMarketProviderStatus(getServerConfiguration().marketData.finnhubApiKey),
+			getAlpacaPaperAccountHealth(),
+		]);
 		return NextResponse.json({
 			checkedAt:health.checkedAt,
 			internalSimulation:health,
+			alpacaPaperAccount,
 			marketData:{
 				status:marketProvider.status,
 				provider:marketProvider.provider,
