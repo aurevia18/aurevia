@@ -1,7 +1,7 @@
 import {Prisma} from '@prisma/client';
 import {db} from '@/lib/db';
 import {nextPrice} from '@/lib/market';
-import {simulatedInvestmentPayout} from '@/lib/investment-policy';
+import {principalOnlySettlement} from '@/lib/investment-policy';
 
 export type InternalServiceStatus='AVAILABLE'|'UNAVAILABLE';
 
@@ -35,7 +35,7 @@ async function checkFunding(){
 
 async function checkInvestments(){
 	await db.investmentRequest.count();
-	const payout=simulatedInvestmentPayout(new Prisma.Decimal(1),new Prisma.Decimal(0));
+	const payout=principalOnlySettlement(new Prisma.Decimal(1));
 	if(!payout.equals(1))throw new Error('SIMULATED_INVESTMENT_CALCULATION_FAILED');
 }
 

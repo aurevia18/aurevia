@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {InvestmentStatus,Prisma} from '@prisma/client';
-import {nextInvestmentStatus,simulatedInvestmentPayout,validateInvestmentSettlement} from '../lib/investment-policy';
+import {nextInvestmentStatus,principalOnlySettlement,recordedInvestmentPnl,validateInvestmentSettlement} from '../lib/investment-policy';
 
 describe('investment lifecycle policy',()=>{
  it('allows only explicit lifecycle transitions',()=>{
@@ -18,9 +18,10 @@ describe('investment lifecycle policy',()=>{
   expect(()=>validateInvestmentSettlement(100)).not.toThrow();
  });
 
- it('calculates simulated target return with decimal precision',()=>{
-  expect(simulatedInvestmentPayout(new Prisma.Decimal('1000'),new Prisma.Decimal('8')).toFixed(2)).toBe('1080.00');
-  expect(simulatedInvestmentPayout(new Prisma.Decimal('1000'),new Prisma.Decimal('-100')).toFixed(2)).toBe('0.00');
-  expect(simulatedInvestmentPayout(new Prisma.Decimal('1000'),null).toFixed(2)).toBe('1000.00');
+ it('keeps configured target returns as estimates rather than settled earnings',()=>{
+  const reservedPrincipal=new Prisma.Decimal('1000.00');
+  expect(principalOnlySettlement(reservedPrincipal).toFixed(2)).toBe('1000.00');
+  expect(recordedInvestmentPnl(reservedPrincipal,null).toFixed(2)).toBe('0.00');
+  expect(recordedInvestmentPnl(reservedPrincipal,reservedPrincipal).toFixed(2)).toBe('0.00');
  });
 });

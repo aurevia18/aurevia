@@ -358,7 +358,7 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
   }
 
   async getOrderStatus(providerOrderId: string): Promise<ProviderOrder> {
-    return normalizeIndividualOrder(await this.getOrder(providerOrderId), 'status');
+    return normalizeIndividualOrder(await this.getOrder(providerOrderId));
   }
 
   async getOrderByClientId(clientOrderId:string):Promise<ProviderOrder>{
@@ -369,7 +369,7 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
   async getOrders():Promise<ProviderOrder[]>{
     const response=await this.request<AlpacaTradingOrderResponse[]>('/v2/orders?status=all&limit=500');
     if(!Array.isArray(response))throw new Error('ALPACA_TRADING_API_INVALID_ORDERS_RESPONSE');
-    return response.map(item=>normalizeIndividualOrder(item,item.client_order_id??''));
+    return response.map(item=>normalizeIndividualOrder(item));
   }
 
   async getPositions(_accountId: string): Promise<ProviderPosition[]> {
@@ -427,9 +427,9 @@ type AlpacaTradingAsset={
 
 function normalizeIndividualOrder(
   response: AlpacaTradingOrderResponse,
-  idempotencyKey: string,
+  expectedClientOrderId?: string,
 ): ProviderOrder {
-  if(!response.id||!response.status||!response.client_order_id||!response.created_at||!response.updated_at||normalizeState(response.status)==='FAILED')throw new Error('ALPACA_TRADING_API_INVALID_ORDER_RESPONSE');
+  if(!response.id||!response.status||!response.client_order_id||(expectedClientOrderId!==undefined&&response.client_order_id!==expectedClientOrderId)||!response.created_at||!response.updated_at||normalizeState(response.status)==='FAILED')throw new Error('ALPACA_TRADING_API_INVALID_ORDER_RESPONSE');
   for(const value of [response.filled_qty,response.filled_avg_price]){
     if(value!==undefined&&value!==null&&(!/^\d+(\.\d+)?$/.test(value)||!Number.isFinite(Number(value))))throw new Error('ALPACA_TRADING_API_INVALID_ORDER_RESPONSE');
   }

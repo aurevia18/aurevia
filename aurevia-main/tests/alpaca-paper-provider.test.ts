@@ -64,4 +64,12 @@ describe('Alpaca Paper provider validation',()=>{
 		expect(fetcher.mock.calls[0]?.[0]).toBe('https://paper-api.alpaca.markets/v2/orders');
 		expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({client_order_id:'client-order-123456',qty:'1',symbol:'AAPL'});
 	});
+
+	it('rejects an accepted provider order whose client ID does not match the idempotency key',async()=>{
+		const fetcher=vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({...providerOrder,client_order_id:'different-client-order'}),{status:200}));
+
+		await expect(provider(fetcher).submitOrder({
+			clientOrderId:'client-order-123456',accountId:'paper-account-1',symbol:'AAPL',side:'BUY',type:'MARKET',quantity:'1',
+		},'client-order-123456')).rejects.toThrow('ALPACA_TRADING_API_INVALID_ORDER_RESPONSE');
+	});
 });

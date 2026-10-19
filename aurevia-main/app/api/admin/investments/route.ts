@@ -4,7 +4,7 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
-import {InvestmentAction,nextInvestmentStatus,simulatedInvestmentPayout} from '@/lib/investment-policy';
+import {InvestmentAction,nextInvestmentStatus,principalOnlySettlement} from '@/lib/investment-policy';
 import {createNotification} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 
@@ -167,7 +167,7 @@ export async function PATCH(request:Request){
    let settlementReference:string|undefined;
   let simulatedPayout:Prisma.Decimal|undefined;
    if(action==='settle'){
-   simulatedPayout=simulatedInvestmentPayout(current.amount,current.targetReturnPercent);
+   simulatedPayout=principalOnlySettlement(current.amount);
     settlementReference=`SIMULATED-SETTLEMENT:${current.accountMode}:${current.id}`;
    }
    const now=new Date();
@@ -197,23 +197,15 @@ export async function PATCH(request:Request){
    if(action==='settle'){
     const reservation=await tx.ledgerTransaction.findUnique({where:{reference:`INVESTMENT:${current.id}:RESERVE`},select:{id:true}});
     if(!reservation)throw new Error('SIMULATED_INVESTMENT_RESERVATION_MISSING');
-    const payout=simulatedPayout!;
-    const principal=payout.lt(current.amount)?payout:current.amount;
+    const principal=simulatedPayout!;
     const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${current.accountMode}:USD`,`${current.accountMode} simulated investment escrow`,'USD',current.accountMode);
     const userAccount=await ensureUserLedger(tx,current.userId,current.accountMode,'USD');
     if(principal.gt(0))await postDoubleEntry(tx,{reference:`INVESTMENT:${current.id}:PAYOUT`,description:`Simulated principal and payout for ${current.opportunity.title}`,debitAccountId:escrow.id,creditAccountId:userAccount.id,amount:principal});
-    if(payout.gt(current.amount)){
-     const returns=await ensureSystemAccount(tx,`SYSTEM:${current.accountMode}:INVESTMENT_RETURNS`,`${current.accountMode} simulated investment returns`,'USD',current.accountMode);
-     await postDoubleEntry(tx,{reference:`INVESTMENT:${current.id}:SIMULATED_RETURN`,description:`Simulated investment return for ${current.opportunity.title}`,debitAccountId:returns.id,creditAccountId:userAccount.id,amount:payout.minus(current.amount)});
-    }else if(current.amount.gt(payout)){
-     const losses=await ensureSystemAccount(tx,`SYSTEM:${current.accountMode}:INVESTMENT_LOSSES`,`${current.accountMode} simulated investment losses`,'USD',current.accountMode);
-     await postDoubleEntry(tx,{reference:`INVESTMENT:${current.id}:SIMULATED_LOSS`,description:`Simulated investment loss for ${current.opportunity.title}`,debitAccountId:escrow.id,creditAccountId:losses.id,amount:current.amount.minus(payout)});
-    }
    }
    const updated=await tx.investmentRequest.findUniqueOrThrow({where:{id:current.id}});
   await tx.auditLog.create({data:{actorId:admin.id,action:`INVESTMENT_${nextStatus}`,entity:'INVESTMENT',entityId:current.id,metadata:{oldState:current.status,newState:nextStatus,accountMode:current.accountMode,simulated:true,amount:current.amount.toString(),externalExecutionReference:null,settlementReference:settlementReference||null,simulatedPayout:simulatedPayout?.toString()??null,note:input.note||null}}});
    const statusText=nextStatus.toLowerCase().replaceAll('_',' ');
-   const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity; any payout is a virtual ledger result, not an external investment or return.`;
+   const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity. At settlement, only the reserved principal is returned; configured target returns are estimates and are not credited as earnings.`;
    await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`Investment ${statusText}`,message,dedupeKey:`investment:${current.id}:${nextStatus}:${updated.updatedAt.toISOString()}`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
    return updated;
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});

@@ -405,6 +405,7 @@ model Order {
   providerStatus       String?
   providerAcceptedAt   DateTime?
   providerUpdatedAt    DateTime?
+  providerReservedAmount Decimal? @db.Decimal(30, 10)
   reconciliationStatus String?
   reconciledAt         DateTime?
   createdAt            DateTime    @default(now())
@@ -503,6 +504,7 @@ model FundingRequest {
   method               String
   amount               Decimal               @db.Decimal(30, 10)
   creditedAmount       Decimal?              @db.Decimal(30, 10)
+  creditedCurrency     String?
   currency             String                @default("USD")
   status               FundingStatus         @default(PENDING)
   accountMode          AccountMode           @default(DEMO)

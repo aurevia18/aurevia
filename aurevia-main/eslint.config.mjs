@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import {fixupPluginRules} from '@eslint/compat';
 import nextPlugin from '@next/eslint-plugin-next';
 import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
@@ -14,7 +15,7 @@ const eslintConfig=tseslint.config(
 	{
 		files:sourceFiles,
 		languageOptions:{globals:{...globals.browser,...globals.node}},
-		plugins:{'@next/next':nextPlugin},
+		plugins:{'@next/next':fixupPluginRules(nextPlugin)},
 		rules:{...nextPlugin.configs.recommended.rules,...nextPlugin.configs['core-web-vitals'].rules},
 	},
 	{

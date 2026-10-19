@@ -23,7 +23,11 @@ export function validateInvestmentSettlement(payout:number|undefined){
  if(payout===undefined||!Number.isFinite(payout)||payout<0)throw new Error('SIMULATED_PAYOUT_REQUIRED');
 }
 
-export function simulatedInvestmentPayout(principal:Prisma.Decimal,targetReturnPercent:Prisma.Decimal|null){
- const target=targetReturnPercent??new Prisma.Decimal(0);
- return principal.mul(new Prisma.Decimal(100).plus(target)).div(100).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);
+export function principalOnlySettlement(principal:Prisma.Decimal){
+ if(!principal.isFinite()||principal.lt(0))throw new Error('SIMULATED_PAYOUT_REQUIRED');
+ return principal.toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);
+}
+
+export function recordedInvestmentPnl(principal:Prisma.Decimal,persistedPayout:Prisma.Decimal|null){
+ return persistedPayout?persistedPayout.minus(principal):new Prisma.Decimal(0);
 }

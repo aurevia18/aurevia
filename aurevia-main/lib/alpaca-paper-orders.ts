@@ -1,7 +1,9 @@
 import {AccountMode,NotificationType,OrderSide,OrderStatus,OrderType,Prisma} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
 import {db} from '@/lib/db';
+import {balance,ensureUserLedger,reservedWithdrawalAmount} from '@/lib/ledger';
 import {assertFreshQuote,assertSellableQuantity} from '@/lib/trading-policy';
+import {assertPaperBuyCollateral,paperOrderCollateral} from '@/lib/bitcoin-funding';
 import {AlpacaTradingApiError,createIndividualTradingApiProviderFromEnvironment} from '@/lib/providers/alpaca-crypto-provider';
 import type {ProviderOrder} from '@/lib/providers/contracts';
 import {matchesOrder,type PlaceOrderInput} from '@/lib/orders';
@@ -131,19 +133,41 @@ export async function submitAlpacaPaperOrder(userId:string,input:PlaceOrderInput
 		const instrument=await tx.instrument.findUnique({where:{id:input.instrumentId}});
 		if(!instrument||!instrument.enabled)throw new AlpacaPaperOrderError('INSTRUMENT_UNAVAILABLE',409);
 		if(instrument.updatedAt.getTime()>Date.now()+5_000)throw new AlpacaPaperOrderError('STALE_MARKET_QUOTE',409);
+		const history=await tx.order.findMany({
+			where:{userId,accountMode:AccountMode.REAL,providerName:ALPACA_PAPER_PROVIDER},
+			select:{instrumentId:true,side:true,quantity:true,filledQuantity:true,averageFillPrice:true,providerReservedAmount:true,status:true,createdAt:true,instrument:{select:{takerFee:true}}},
+			orderBy:{createdAt:'asc'},
+		});
+		if(input.side===OrderSide.BUY){
+			const collateralHistory=history.map(order=>({...order,takerFee:order.instrument.takerFee}));
+			const collateral=paperOrderCollateral(collateralHistory);
+			const account=await ensureUserLedger(tx,userId,AccountMode.REAL,'USD');
+			const [walletBalance,pendingWithdrawals]=await Promise.all([
+				balance(tx,account.id),
+				reservedWithdrawalAmount(tx,userId,AccountMode.REAL,'USD'),
+			]);
+			const reservePrice=new Prisma.Decimal(input.type===OrderType.LIMIT?input.price!:input.type===OrderType.STOP?input.stopPrice!:input.expectedPrice);
+			const requestedCollateral=new Prisma.Decimal(input.quantity).mul(reservePrice).mul(new Prisma.Decimal(1).plus(instrument.takerFee));
+			try{assertPaperBuyCollateral(walletBalance,pendingWithdrawals,collateral.committed,requestedCollateral)}
+			catch{throw new AlpacaPaperOrderError('INSUFFICIENT_REAL_WALLET_COLLATERAL',409)}
+		}
 		if(input.side===OrderSide.SELL){
-			const history=await tx.order.findMany({where:{userId,accountMode:AccountMode.REAL,providerName:ALPACA_PAPER_PROVIDER,instrumentId:instrument.id},select:{side:true,quantity:true,filledQuantity:true,status:true}});
-			const position=paperPositionAvailable(history);
+			const position=paperPositionAvailable(history.filter(order=>order.instrumentId===instrument.id));
 			assertSellableQuantity(position.owned,position.reserved,new Prisma.Decimal(input.quantity));
 		}
+		const reservePrice=input.type===OrderType.LIMIT?input.price!:input.type===OrderType.STOP?input.stopPrice!:input.expectedPrice;
+		const providerReservedAmount=input.side===OrderSide.BUY
+			?new Prisma.Decimal(input.quantity).mul(reservePrice).mul(new Prisma.Decimal(1).plus(instrument.takerFee))
+			:null;
 		const order=await tx.order.create({data:{
 			userId,instrumentId:instrument.id,accountMode:AccountMode.REAL,side:input.side,type:input.type,
 			quantity:input.quantity,price:input.price,stopPrice:input.stopPrice,idempotencyKey,
-			status:OrderStatus.OPEN,providerName:ALPACA_PAPER_PROVIDER,providerStatus:'SUBMISSION_PENDING',
+			status:OrderStatus.OPEN,providerName:ALPACA_PAPER_PROVIDER,providerStatus:'SUBMISSION_PENDING',providerReservedAmount,
 		},include:{executions:true,instrument:true}});
 		await tx.auditLog.create({data:{actorId:userId,action:'REAL_PAPER_ORDER_SUBMISSION_STARTED',entity:'ORDER',entityId:order.id,metadata:{
 			newState:'SUBMISSION_PENDING',accountMode:AccountMode.REAL,simulated:true,provider:ALPACA_PAPER_PROVIDER,
 			instrument:instrument.symbol,side:input.side,type:input.type,quantity:order.quantity.toString(),
+			internalWalletReservation:providerReservedAmount?.toString()??null,currency:'USD',
 			internalLedgerChanged:false,internalPositionChanged:false,
 		}}});
 		await createNotification(tx,{userId,type:NotificationType.TRADE,title:'REAL · Alpaca Paper order submitted',message:`Your ${input.side.toLowerCase()} ${instrument.symbol} order is being submitted to the shared Alpaca Paper account. It does not change your Aurevia REAL balance or positions.`,dedupeKey:`paper-order:${order.id}:submission-started`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/orders'});

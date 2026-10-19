@@ -48,6 +48,7 @@ export default async function globalSetup(){
 	let realDepositId='';
 	let realDepositWithoutReceiptId='';
 	let realWithdrawalId='';
+	let realDetailId='';
 	const symbols=[`E2E${runId.slice(0,6).toUpperCase()}A/USD`,`E2E${runId.slice(0,6).toUpperCase()}B/USD`];
 	const cryptoSymbol=`BTC${runId.slice(0,6).toUpperCase()}/USD`;
 	const instrumentIds:string[]=[];
@@ -102,10 +103,13 @@ export default async function globalSetup(){
 			realDepositWithoutReceiptId=realDepositWithoutReceipt.id;
 			const realWithdrawal=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.WITHDRAWAL,method:'UNVERIFIED_EXTERNAL',amount:25,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${runId}:real-withdrawal`}});
 			realWithdrawalId=realWithdrawal.id;
+			const realDetail=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.DEPOSIT,method:'UNVERIFIED_EXTERNAL',amount:50,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,receiptKey:`e2e-receipts/${randomUUID()}.png`,idempotencyKey:`e2e:${runId}:real-detail`}});
+			realDetailId=realDetail.id;
 		});
 		process.env.AUREVIA_E2E_REAL_DEPOSIT_ID=realDepositId;
 		process.env.AUREVIA_E2E_REAL_DEPOSIT_NO_PROOF_ID=realDepositWithoutReceiptId;
 		process.env.AUREVIA_E2E_REAL_WITHDRAWAL_ID=realWithdrawalId;
+		process.env.AUREVIA_E2E_REAL_DETAIL_ID=realDetailId;
 				const cleanupState={runId,userId,adminId,legacyUserId,investorId,deletionUserId,deletionEmail,registrationEmail,instrumentIds,paymentMethodId};
 		await writeFile(stateFile,JSON.stringify(cleanupState),{encoding:'utf8',mode:0o600});
 	}catch(error){
@@ -119,7 +123,8 @@ export default async function globalSetup(){
 export async function cleanup(db:PrismaClient,state:{userId:string;adminId:string;legacyUserId?:string;investorId?:string;deletionUserId?:string;deletionEmail?:string;registrationEmail?:string;instrumentIds:string[];paymentMethodId?:string}){
 	const registeredUser=state.registrationEmail?await db.user.findUnique({where:{email:state.registrationEmail},select:{id:true}}):null;
 	const replacementUser=state.deletionEmail?await db.user.findUnique({where:{email:state.deletionEmail},select:{id:true}}):null;
-	const userIds=[state.userId,state.adminId,...(state.legacyUserId?[state.legacyUserId]:[]),...(state.investorId?[state.investorId]:[]),...(state.deletionUserId?[state.deletionUserId]:[]),...(registeredUser?[registeredUser.id]:[]),...(replacementUser?[replacementUser.id]:[])];
+	const isolatedUsers=await db.user.findMany({where:{email:{startsWith:'aurevia-e2e-'}},select:{id:true}});
+	const userIds=[...new Set([state.userId,state.adminId,...(state.legacyUserId?[state.legacyUserId]:[]),...(state.investorId?[state.investorId]:[]),...(state.deletionUserId?[state.deletionUserId]:[]),...(registeredUser?[registeredUser.id]:[]),...(replacementUser?[replacementUser.id]:[]),...isolatedUsers.map(user=>user.id)])];
 	await db.investmentRequest.deleteMany({where:{userId:{in:userIds}}});
 	await db.broadcast.deleteMany({where:{createdById:{in:userIds}}});
 	await db.investmentOpportunity.deleteMany({where:{createdById:{in:userIds}}});

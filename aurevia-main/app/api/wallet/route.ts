@@ -13,12 +13,14 @@ import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} fr
 import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 import {isBitcoinMainnetAddress,SIMULATED_BTC_ADDRESS_SETTING} from '@/lib/config/simulated-bitcoin-address';
+import {BTC_FUNDING_METHOD,normalizeBitcoinTransactionId,validateBitcoinDepositAmount} from '@/lib/bitcoin-funding';
+import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
 	paymentMethodId:z.string().min(1).optional(),
 	amount:z.number().positive().max(100000000),
-	currency:z.enum(SUPPORTED_CURRENCIES),
+	currency:z.union([z.enum(SUPPORTED_CURRENCIES),z.literal('BTC')]),
 	transactionReference:z.string().trim().max(180).optional(),
 	referenceInfo:z.string().trim().max(500).optional(),
 	senderInfo:z.string().trim().max(300).optional(),
@@ -35,15 +37,21 @@ const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,Fund
 export async function GET(){
 	try{
 		const user=await requireUser();
-		await ensureUserLedger(db,user.id,user.accountMode,'USD');
+		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
+		await ensureUserLedger(db,user.id,currentUser.accountMode,'USD');
 		const [accounts,transactions]=await Promise.all([
-			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{currency:'asc'}}),
-			db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}},user:{select:{name:true,email:true}}}}),
+			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},orderBy:{currency:'asc'}}),
+			db.fundingRequest.findMany({where:{userId:user.id,accountMode:currentUser.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}},user:{select:{name:true,email:true}}}}),
 		]);
 		const balances=await Promise.all(accounts.map(async account=>({currency:account.currency,balance:await balance(db,account.id)})));
+		const usdBalance=balances.find(item=>item.currency==='USD')?.balance??null;
+		const withdrawableBalance=currentUser.accountMode===AccountMode.REAL
+			?await getRealWithdrawableBalance(db,user.id,usdBalance??new Prisma.Decimal(0))
+			:null;
 		const accountIds=accounts.map(account=>account.id);
 		const adminLedgerTransactions=accountIds.length?await db.ledgerTransaction.findMany({
-			where:{reference:{startsWith:`ADMIN:${user.accountMode}:${user.id}:`},entries:{some:{accountId:{in:accountIds}}}},
+			where:{reference:{startsWith:`ADMIN:${currentUser.accountMode}:${user.id}:`},entries:{some:{accountId:{in:accountIds}}}},
 			orderBy:{createdAt:'desc'},
 			take:100,
 			include:{entries:{where:{accountId:{in:accountIds}},select:{type:true,amount:true,account:{select:{currency:true}}}}},
@@ -52,15 +60,14 @@ export async function GET(){
 			const entry=transaction.entries[0];
 			return entry?[{id:transaction.id,reference:transaction.reference,description:transaction.description,type:entry.type,amount:entry.amount,currency:entry.account.currency,createdAt:transaction.createdAt}]:[];
 		});
-		const usdBalance=balances.find(item=>item.currency==='USD')?.balance??null;
-		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:'FUNDING_APPROVED'},select:{entityId:true,createdAt:true,metadata:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
+		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:{in:['FUNDING_APPROVED','BTC_DEPOSIT_APPROVED']}},select:{entityId:true,createdAt:true,metadata:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
 		const approvalByRequest=new Map();
 		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId)){
 			const metadata=approval.metadata&&typeof approval.metadata==='object'&&!Array.isArray(approval.metadata)?approval.metadata as Record<string,unknown>:{};
 			approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor,previousBalance:typeof metadata.previousBalance==='string'?metadata.previousBalance:null,resultingBalance:typeof metadata.resultingBalance==='string'?metadata.resultingBalance:null});
 		}
 		const safeTransactions=transactions.map(({receiptKey,...transaction})=>({...transaction,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
-		return NextResponse.json(jsonSafe({accountMode:user.accountMode,balance:usdBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json(jsonSafe({accountMode:currentUser.accountMode,balance:usdBalance,withdrawableBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
@@ -76,6 +83,8 @@ export async function POST(req:Request){
 	try{
 		const user=await requireUser();
 		ownerId=user.id;
+		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
+		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
 		let body:unknown;
 		let evidenceFile:File|null=null;
 		if(req.headers.get('content-type')?.includes('multipart/form-data')){
@@ -90,13 +99,18 @@ export async function POST(req:Request){
 			body=await req.json();
 		}
 		const parsed=schema.parse(body);
+		const btcDeposit=currentUser.accountMode===AccountMode.REAL&&parsed.type===FundingType.DEPOSIT&&parsed.currency==='BTC';
+		if(parsed.currency==='BTC'&&!btcDeposit)throw new Error('BTC_REAL_DEPOSIT_ONLY');
+		const bitcoinTransactionId=btcDeposit?normalizeBitcoinTransactionId(parsed.transactionReference||''):null;
+		if(btcDeposit&&!bitcoinTransactionId)throw new Error('BTC_TRANSACTION_ID_REQUIRED');
+		if(btcDeposit)validateBitcoinDepositAmount(parsed.amount);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
 		if(parsed.type===FundingType.DEPOSIT){
-			const access=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true}});
-			if(!access.depositEnabled)throw new Error('DEPOSITS_DISABLED');
+			if(!currentUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 		}
 		if(parsed.paymentMethodId)return NextResponse.json({error:'External payment methods are disabled. Submit an internal simulated request without a payment method.'},{status:400});
+		if(btcDeposit&&!evidenceFile)throw new FundingEvidenceError('Attach a receipt screenshot for BTC deposit review.',400);
 		if(parsed.type===FundingType.DEPOSIT&&evidenceFile){
 			if(evidenceFile.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
 			if(evidenceFile.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
@@ -107,25 +121,25 @@ export async function POST(req:Request){
 			await uploadPrivateObject('receipt',user.id,receiptKey,bytes,contentType);
 		}
 		if(parsed.type==='WITHDRAWAL'){
-			const controls=await db.user.findUniqueOrThrow({where:{id:user.id},select:{withdrawalEnabled:true,accountRestricted:true}});
-			if(!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
-			if(controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
+			if(!currentUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
+			if(currentUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 		}
-		const currency=parsed.currency.toUpperCase();
+		const currency=btcDeposit?'BTC':parsed.currency.toUpperCase();
 		const amount=currency==='USD'?roundUsdAmount(parsed.amount):new Prisma.Decimal(parsed.amount);
 		if(amount.lte(0))throw new Error('INVALID_AMOUNT');
+		const transactionReference=btcDeposit?bitcoinTransactionId:parsed.transactionReference||null;
 
 		const result=await db.$transaction(async tx=>{
 			const duplicate=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
 			if(duplicate){
-				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null)throw new Error('IDEMPOTENCY_KEY_REUSED');
+				if(duplicate.userId!==user.id||duplicate.accountMode!==currentUser.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null||duplicate.transactionReference!==transactionReference)throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
 			let simulatedBitcoinAddressAcknowledged=false;
-			if(parsed.type===FundingType.DEPOSIT){
+			if(parsed.type===FundingType.DEPOSIT&&!btcDeposit){
 				const configured=await tx.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 				const address=configured?.value.trim()||'';
-				if(user.accountMode==='REAL'&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
+				if(currentUser.accountMode==='REAL'&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
 				if(address&&!isBitcoinMainnetAddress(address))throw new Error('SIMULATED_BTC_ADDRESS_INVALID');
 				if(address){
 					if(parsed.simulatedBitcoinAddress!==address)throw new Error('SIMULATED_BTC_ADDRESS_CHANGED');
@@ -133,44 +147,49 @@ export async function POST(req:Request){
 					simulatedBitcoinAddressAcknowledged=true;
 				}
 			}
-			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
+			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}});
 			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
+			if(btcDeposit&&(fundingUser.kycStatus!=='APPROVED'||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
-			if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
+			if(currentUser.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
 			if(parsed.type==='WITHDRAWAL'){
-				const account=await ensureUserLedger(tx,user.id,user.accountMode,currency);
+				const account=await ensureUserLedger(tx,user.id,currentUser.accountMode,currency);
 				const currentBalance=await balance(tx,account.id);
-				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:user.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
+				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:currentUser.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
 				const reserved=pending._sum.amount??new Prisma.Decimal(0);
-				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,simulated:true});
+				if(currentUser.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,simulated:true});
 				else if(currentBalance.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
+				if(currentUser.accountMode==='REAL'){
+					const withdrawable=await getRealWithdrawableBalance(tx,user.id,currentBalance);
+					if(withdrawable.lt(amount))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
+				}
 			}
 			const request=await tx.fundingRequest.create({data:{
 				userId:user.id,
 				type:parsed.type,
-				method:`Internal simulated ${parsed.type.toLowerCase()}`,
+				method:btcDeposit?BTC_FUNDING_METHOD:`Internal simulated ${parsed.type.toLowerCase()}`,
 				amount,
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
-				accountMode:user.accountMode,
+				accountMode:currentUser.accountMode,
 				paymentMethodId:null,
 				idempotencyKey,
-				transactionReference:parsed.transactionReference||null,
+				transactionReference,
 				referenceInfo:parsed.referenceInfo||null,
 				senderInfo:parsed.senderInfo||null,
 				destinationInfo:null,
 				beneficiaryInfo:null,
-				network:null,
+				network:btcDeposit?'BITCOIN':null,
 				note:parsed.note||null,
 				receiptKey:receiptKey||null,
 			}});
-			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,simulatedBitcoinAddressAcknowledged}}});
+			await tx.auditLog.create({data:{actorId:user.id,action:btcDeposit?'BTC_DEPOSIT_SUBMITTED':'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,transactionReference:btcDeposit?transactionReference:null,simulatedBitcoinAddressAcknowledged}}});
 			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
-			const disclosure=request.accountMode===AccountMode.REAL?' This is a simulated ledger request; no external money moves.':'';
-			await createNotification(tx,{userId:user.id,type:notificationType,title:`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:`New ${request.type.toLowerCase()} request`,message:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			const disclosure=btcDeposit?' The transaction has not been verified and no wallet credit has been made.':request.accountMode===AccountMode.REAL?' This is a simulated ledger request; no external money moves.':'';
+			await createNotification(tx,{userId:user.id,type:notificationType,title:btcDeposit?'BTC deposit request received':`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:btcDeposit?`Your BTC deposit request is awaiting manual transaction and evidence review. No blockchain confirmation is claimed and no wallet credit has been made.`:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
+			await notifyActiveAdmins(tx,{type:notificationType,title:btcDeposit?'BTC deposit awaits manual verification':`New ${request.type.toLowerCase()} request`,message:btcDeposit?`A REAL BTC deposit request with a transaction ID and receipt screenshot awaits manual review. No payment confirmation is assumed.`:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
@@ -178,7 +197,7 @@ export async function POST(req:Request){
 		receiptKey=undefined;
 		let emailDelivery:'sent'|'not-configured'|'failed'='not-configured';
 		if(!result.replay){
-			const delivery=await sendSupportEmail(`New ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`].join('\n'));
+			const delivery=await sendSupportEmail(`New ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`,btcDeposit?`Transaction ID: ${transactionReference}`:''].filter(Boolean).join('\n'));
 			emailDelivery=delivery.sent?'sent':delivery.reason||'failed';
 		}
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!storedReceiptKey,emailDelivery},{status:result.replay?200:201});
@@ -192,6 +211,9 @@ export async function POST(req:Request){
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'A simulated Bitcoin display address is not configured. Contact an administrator before requesting a REAL deposit.'},{status:503});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_CHANGED')return NextResponse.json({error:'The simulated Bitcoin display address changed. Refresh the wallet and confirm the current address.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_INVALID')return NextResponse.json({error:'The administrator-configured simulated Bitcoin display address is invalid. Contact support.'},{status:503});
+		if(error instanceof Error&&error.message==='BTC_TRANSACTION_ID_REQUIRED')return NextResponse.json({error:'Enter a valid 64-character Bitcoin transaction ID.'},{status:400});
+		if(error instanceof Error&&error.message==='INVALID_BTC_AMOUNT')return NextResponse.json({error:'Enter a positive BTC amount with at most 8 decimal places.'},{status:400});
+		if(error instanceof Error&&error.message==='BTC_REAL_DEPOSIT_ONLY')return NextResponse.json({error:'BTC amounts are accepted only for REAL deposit requests.'},{status:400});
 		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
 		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
