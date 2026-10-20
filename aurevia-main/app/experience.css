@@ -8,27 +8,27 @@
 @media(max-width:600px){.market-depth-canvas{opacity:.36}}
 @media(prefers-reduced-motion:reduce){.market-depth-canvas{opacity:.28}}
 :root{
-  --a-ink:#07120e;
-  --a-forest:#0c2119;
-  --a-forest-soft:#102a20;
-  --a-panel:#101a15;
-  --a-panel-raised:#14231b;
-  --a-line:rgba(218,228,218,.12);
-  --a-muted:#a4b1a8;
-  --a-paper:#f0f2ed;
-  --a-brass:#c5a46b;
-  --a-brass-soft:#e0c99e;
+  --a-ink:#0b0f19;
+  --a-forest:#0a0e17;
+  --a-forest-soft:#111827;
+  --a-panel:#101521;
+  --a-panel-raised:#151c2b;
+  --a-line:rgba(218,228,238,.12);
+  --a-muted:#9aa5b5;
+  --a-paper:#f0f3f8;
+  --a-brass:#00e676;
+  --a-brass-soft:#6effb1;
 }
 
 html{scroll-behavior:smooth;background:var(--a-ink)}
 body{margin:0;overflow-x:clip;font-family:"Avenir Next",Avenir,"Segoe UI",sans-serif;color:var(--a-paper);background:var(--a-ink)}
-::selection{background:rgba(197,164,107,.35);color:#fff}
+::selection{background:rgba(0,230,118,.3);color:#fff}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--a-brass-soft);outline-offset:3px}
-.card{border-radius:6px;border-color:var(--a-line);background:linear-gradient(145deg,rgba(19,32,24,.96),rgba(10,19,14,.98));box-shadow:0 18px 48px rgba(0,0,0,.2)}
+.card{border-radius:8px;border-color:var(--a-line);background:linear-gradient(145deg,rgba(21,28,43,.96),rgba(10,14,23,.98));box-shadow:0 18px 48px rgba(0,0,0,.24)}
 .card:before{opacity:.35}
 .btn{min-height:42px;border-radius:4px}
-.input{min-height:43px;border-radius:4px;border-color:rgba(220,230,221,.17);background:#09130d}
-.site-nav{position:sticky;top:0;z-index:90;max-width:100%;overflow:visible;background:rgba(7,18,14,.9);border-color:var(--a-line);backdrop-filter:blur(20px)}
+.input{min-height:43px;border-radius:6px;border-color:rgba(220,230,238,.17);background:#0a0e17}
+.site-nav{position:sticky;top:0;z-index:90;max-width:100%;overflow:visible;background:rgba(10,14,23,.9);border-color:var(--a-line);backdrop-filter:blur(20px)}
 .nav-inner{position:relative;z-index:92;max-width:1440px;min-height:74px;padding-inline:clamp(18px,4vw,58px)}
 .brand{gap:11px;font-size:12px;letter-spacing:.16em}
 .brand b{color:var(--a-brass);font-weight:600}
@@ -1491,4 +1491,97 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
   .home-hero-copy,.home-hero-visual{animation:none;opacity:1;transform:none}
   .market-stage,.dashboard-preview{transform:none}
+}
+
+@media(min-width:641px){
+  .portfolio-page{--portfolio-green:#00e676;--portfolio-bg:#0b0f19;max-width:1280px;margin-inline:auto;padding:36px clamp(24px,4vw,56px) 64px;background:#0b0f19}
+  .portfolio-heading{align-items:center;margin-bottom:12px}
+  .portfolio-heading h1{font-family:inherit;font-size:clamp(32px,4vw,42px);font-weight:650;letter-spacing:-.045em}
+  .portfolio-heading-actions{display:flex;align-items:center;gap:10px}
+  .portfolio-live-dot{width:7px;height:7px;border-radius:50%;background:#00e676;box-shadow:0 0 10px rgba(0,230,118,.75)}
+  .portfolio-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.35fr);align-items:center;gap:28px;margin:18px 0 14px;padding:clamp(24px,3.5vw,40px);border:1px solid rgba(255,255,255,.09);border-radius:16px;background:radial-gradient(ellipse at 12% 5%,rgba(0,230,118,.1),transparent 52%),linear-gradient(135deg,rgba(255,255,255,.035),rgba(255,255,255,.008)),#101521;box-shadow:0 24px 64px rgba(0,0,0,.22)}
+  .portfolio-value,.portfolio-today{display:grid;min-width:0;gap:9px}
+  .portfolio-value>span,.portfolio-today>span,.portfolio-footer-summary span{color:#9aa5b5;font-size:12px;letter-spacing:.04em}
+  .portfolio-value>strong{color:#f5f7fb;font-size:clamp(42px,6vw,68px);font-weight:620;letter-spacing:-.055em;line-height:1.06;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .portfolio-value>p{margin:0;font-size:14px;font-weight:600}
+  .portfolio-today{padding:18px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(7,11,18,.62)}
+  .portfolio-today>b{font-size:27px;font-variant-numeric:tabular-nums}
+  .portfolio-today>small{color:#8490a0;font-size:11px;line-height:1.5}
+  .portfolio-actions{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 16px}
+  .portfolio-actions .btn{display:inline-flex;min-height:42px;align-items:center;justify-content:center;gap:8px;padding:9px 14px;border-radius:8px;font-size:12px;transition:transform .18s ease,border-color .18s ease,background .18s ease}
+  .portfolio-actions .btn:hover{transform:translateY(-1px)}
+  .portfolio-summary{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(3,minmax(0,1fr));gap:1px;margin-bottom:14px;overflow:hidden;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.08)}
+  .portfolio-summary>div{display:grid;min-width:0;align-content:center;gap:8px;padding:17px;background:#101521}
+  .portfolio-summary span,.portfolio-summary small{color:#9aa5b5;font-size:10px;text-transform:uppercase}
+  .portfolio-summary small{text-transform:none}
+  .portfolio-summary strong,.portfolio-metric b{color:#f5f7fb;font-size:18px;font-variant-numeric:tabular-nums}
+  .portfolio-premium-grid{grid-template-columns:minmax(0,1.45fr) minmax(280px,.78fr);gap:14px}
+  .portfolio-premium-grid>.account-panel,.portfolio-page>.account-panel{border:1px solid rgba(255,255,255,.08);border-radius:12px;background:linear-gradient(145deg,rgba(255,255,255,.025),rgba(255,255,255,.008)),#101521;box-shadow:0 18px 48px rgba(0,0,0,.18)}
+  .portfolio-timeframes{margin-top:14px}
+  .portfolio-timeframes button{min-width:44px;min-height:36px;border-radius:7px;font-size:11px}
+  .portfolio-timeframes button.is-active{border-color:rgba(0,230,118,.32);background:rgba(0,230,118,.1);color:#00e676}
+  .portfolio-chart{height:300px}
+  .portfolio-donut-layout{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(130px,1fr);align-items:center;gap:12px;margin-top:14px}
+  .portfolio-donut{width:100%;height:205px;min-width:0}
+  .portfolio-legend{display:grid;gap:14px;margin:0;padding:0;list-style:none}
+  .portfolio-legend li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:9px;color:#c7d0dc;font-size:11px}
+  .portfolio-legend i{width:8px;height:8px;border-radius:50%}
+  .portfolio-legend b{color:#f4f6f9;font-size:11px;font-variant-numeric:tabular-nums}
+  .portfolio-holdings-head,.portfolio-holding>summary{display:grid;grid-template-columns:minmax(180px,1.6fr) repeat(4,minmax(110px,.8fr));align-items:center;gap:15px}
+  .portfolio-holdings-head{padding:13px 10px 10px;border-bottom:1px solid rgba(255,255,255,.1);color:#8490a0;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+  .portfolio-holding{border-bottom:1px solid rgba(255,255,255,.07)}
+  .portfolio-holding>summary{min-height:68px;padding:10px;color:#dce3ed;font-size:12px;cursor:pointer;list-style:none}
+  .portfolio-holding>summary::-webkit-details-marker,.portfolio-investment-row>summary::-webkit-details-marker{display:none}
+  .portfolio-holding>summary:focus-visible,.portfolio-investment-row>summary:focus-visible{outline:2px solid var(--portfolio-green);outline-offset:-2px}
+  .portfolio-holding-asset{display:flex;min-width:0;align-items:center;gap:12px}
+  .portfolio-asset-icon{display:grid;width:38px;height:38px;flex:none;place-items:center;border:1px solid color-mix(in srgb,var(--asset-color) 38%,transparent);border-radius:12px;background:radial-gradient(circle at 28% 24%,rgba(255,255,255,.25),transparent 33%),linear-gradient(145deg,color-mix(in srgb,var(--asset-color) 30%,#17202d),color-mix(in srgb,var(--asset-color) 11%,#090e17));box-shadow:inset 0 1px rgba(255,255,255,.18),0 7px 16px color-mix(in srgb,var(--asset-color) 18%,transparent);color:var(--asset-color)}
+  .portfolio-holding-asset>span:last-child{display:grid;min-width:0;gap:5px}
+  .portfolio-holding-asset b{overflow-wrap:anywhere;color:#f3f5f8}
+  .portfolio-holding-asset small{color:#8a96a6;font-size:10px}
+  .portfolio-holding>summary>strong{font-size:12px;font-variant-numeric:tabular-nums}
+  .portfolio-holding>dl,.portfolio-investment-row dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0;padding:13px 16px;border-top:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.018)}
+  .portfolio-holding>dl>div,.portfolio-investment-row dl>div{display:grid;min-width:0;gap:4px}
+  .portfolio-holding dt,.portfolio-investment-row dt{color:#8793a3;font-size:10px}
+  .portfolio-holding dd,.portfolio-investment-row dd{margin:0;color:#e2e8ef;font-size:11px;overflow-wrap:anywhere}
+  .portfolio-footer-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-top:14px;overflow:hidden;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.08)}
+  .portfolio-footer-summary article{display:grid;min-width:0;gap:9px;padding:18px;background:#101521}
+  .portfolio-footer-summary b{color:#f5f7fb;font-size:20px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .portfolio-investment-list{display:grid;margin-top:12px}
+  .portfolio-investment-row,.portfolio-recent-funding{border-bottom:1px solid rgba(255,255,255,.07)}
+  .portfolio-investment-row>summary{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:14px;padding:14px 2px;cursor:pointer;list-style:none}
+  .portfolio-investment-row>summary>span:first-child{display:grid;min-width:0;gap:5px}
+  .portfolio-investment-row>summary b{color:#f3f5f8;font-size:13px;overflow-wrap:anywhere}
+  .portfolio-investment-row>summary small,.portfolio-investment-row>small{color:#8a96a6;font-size:10px;overflow-wrap:anywhere}
+  .portfolio-investment-row>small{display:block;padding:0 12px 13px;line-height:1.5}
+  .portfolio-recent-funding{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 2px;color:inherit;text-decoration:none}
+  .portfolio-recent-funding:hover{background:rgba(255,255,255,.025)}
+  .portfolio-recent-funding-icon{display:grid;width:36px;height:36px;place-items:center;border:1px solid rgba(0,230,118,.2);border-radius:10px;background:rgba(0,230,118,.07);color:#00e676}
+  .portfolio-recent-funding>span:nth-child(2){display:grid;min-width:0;gap:5px}
+  .portfolio-recent-funding b{color:#e8edf4;font-size:12px}
+  .portfolio-recent-funding small{color:#8a96a6;font-size:10px;overflow-wrap:anywhere}
+  .portfolio-opportunity-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+  .portfolio-opportunity-card{display:grid;min-width:0;gap:8px;padding:14px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);color:inherit;text-decoration:none;transition:transform .18s ease,border-color .18s ease}
+  .portfolio-opportunity-card:hover{transform:translateY(-2px);border-color:rgba(0,230,118,.3)}
+  .portfolio-opportunity-card b{color:#f3f5f8;font-size:12px}
+  .portfolio-opportunity-card small,.portfolio-opportunity-terms{color:#8a96a6;font-size:10px}
+}
+
+@media(max-width:760px){
+  .portfolio-holdings-head{display:none}
+  .portfolio-holding>summary{grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;padding:11px 4px}
+  .portfolio-holding-asset{grid-column:1;grid-row:1/4}
+  .portfolio-holding>summary>span:nth-child(2){grid-column:2;grid-row:1;color:#b8c2cf;font-size:10px}
+  .portfolio-holding>summary>span:nth-child(2):before{content:"Share · "}
+  .portfolio-holding>summary>span:nth-child(3){grid-column:1;grid-row:4;color:#b8c2cf;font-size:10px}
+  .portfolio-holding>summary>span:nth-child(3):before{content:"Invested · "}
+  .portfolio-holding>summary>span:nth-child(4){grid-column:1;grid-row:5;color:#b8c2cf;font-size:10px}
+  .portfolio-holding>summary>span:nth-child(4):before{content:"Current · "}
+  .portfolio-holding>summary>strong{grid-column:2;grid-row:2/6;align-self:center}
+  .portfolio-opportunity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+@media(max-width:480px){
+  .portfolio-opportunity-grid{grid-template-columns:minmax(0,1fr)}
+  .portfolio-footer-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .portfolio-footer-summary article:last-child{grid-column:1/-1}
 }

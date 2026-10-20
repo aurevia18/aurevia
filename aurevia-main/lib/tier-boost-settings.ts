@@ -1,0 +1,4 @@
+export const tierBoostSettingKeys={
+	2:'SIMULATED_TIER_2_EARNING_BOOST_PERCENT',
+	3:'SIMULATED_TIER_3_EARNING_BOOST_PERCENT',
+} as const;

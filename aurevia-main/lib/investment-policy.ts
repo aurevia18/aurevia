@@ -28,6 +28,13 @@ export function principalOnlySettlement(principal:Prisma.Decimal){
  return principal.toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);
 }
 
+export function simulatedInvestmentSettlement(principal:Prisma.Decimal,targetReturnPercent:Prisma.Decimal|null,tierBoostPercent:Prisma.Decimal){
+ if(!principal.isFinite()||principal.lt(0)||!tierBoostPercent.isFinite()||tierBoostPercent.lt(0))throw new Error('SIMULATED_PAYOUT_REQUIRED');
+ const returnPercent=(targetReturnPercent??new Prisma.Decimal(0)).plus(tierBoostPercent);
+ const multiplier=Prisma.Decimal.max(0,new Prisma.Decimal(1).plus(returnPercent.div(100)));
+ return principal.mul(multiplier).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);
+}
+
 export function recordedInvestmentPnl(principal:Prisma.Decimal,persistedPayout:Prisma.Decimal|null){
  return persistedPayout?persistedPayout.minus(principal):new Prisma.Decimal(0);
 }

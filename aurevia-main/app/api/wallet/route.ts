@@ -101,8 +101,8 @@ export async function POST(req:Request){
 		const parsed=schema.parse(body);
 		const btcDeposit=currentUser.accountMode===AccountMode.REAL&&parsed.type===FundingType.DEPOSIT&&parsed.currency==='BTC';
 		if(parsed.currency==='BTC'&&!btcDeposit)throw new Error('BTC_REAL_DEPOSIT_ONLY');
-		const bitcoinTransactionId=btcDeposit?normalizeBitcoinTransactionId(parsed.transactionReference||''):null;
-		if(btcDeposit&&!bitcoinTransactionId)throw new Error('BTC_TRANSACTION_ID_REQUIRED');
+		const bitcoinTransactionId=btcDeposit&&parsed.transactionReference?normalizeBitcoinTransactionId(parsed.transactionReference):null;
+		if(btcDeposit&&parsed.transactionReference&&!bitcoinTransactionId)throw new Error('BTC_TRANSACTION_ID_INVALID');
 		if(btcDeposit)validateBitcoinDepositAmount(parsed.amount);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
@@ -136,10 +136,10 @@ export async function POST(req:Request){
 				return {request:duplicate,replay:true};
 			}
 			let simulatedBitcoinAddressAcknowledged=false;
-			if(parsed.type===FundingType.DEPOSIT&&!btcDeposit){
+			if(parsed.type===FundingType.DEPOSIT){
 				const configured=await tx.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 				const address=configured?.value.trim()||'';
-				if(currentUser.accountMode==='REAL'&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
+				if(currentUser.accountMode==='REAL'&&!btcDeposit&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
 				if(address&&!isBitcoinMainnetAddress(address))throw new Error('SIMULATED_BTC_ADDRESS_INVALID');
 				if(address){
 					if(parsed.simulatedBitcoinAddress!==address)throw new Error('SIMULATED_BTC_ADDRESS_CHANGED');
@@ -188,8 +188,8 @@ export async function POST(req:Request){
 			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
 			const disclosure=btcDeposit?' The transaction has not been verified and no wallet credit has been made.':request.accountMode===AccountMode.REAL?' This is a simulated ledger request; no external money moves.':'';
-			await createNotification(tx,{userId:user.id,type:notificationType,title:btcDeposit?'BTC deposit request received':`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:btcDeposit?`Your BTC deposit request is awaiting manual transaction and evidence review. No blockchain confirmation is claimed and no wallet credit has been made.`:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:btcDeposit?'BTC deposit awaits manual verification':`New ${request.type.toLowerCase()} request`,message:btcDeposit?`A REAL BTC deposit request with a transaction ID and receipt screenshot awaits manual review. No payment confirmation is assumed.`:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			await createNotification(tx,{userId:user.id,type:notificationType,title:btcDeposit?'BTC deposit request received':`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:btcDeposit?`Your BTC deposit screenshot is awaiting manual review${transactionReference?' with its transaction ID':''}. No blockchain confirmation is claimed and no wallet credit has been made.`:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
+			await notifyActiveAdmins(tx,{type:notificationType,title:btcDeposit?'BTC deposit awaits manual verification':`New ${request.type.toLowerCase()} request`,message:btcDeposit?`A REAL BTC deposit request with a receipt screenshot${transactionReference?' and transaction ID':''} awaits manual review. No payment confirmation is assumed.`:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
@@ -207,11 +207,11 @@ export async function POST(req:Request){
 		if(error instanceof FundingEvidenceError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_ACK_REQUIRED')return NextResponse.json({error:'Copy or scan the configured simulated Bitcoin address and confirm before submitting this deposit.'},{status:400});
+		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_ACK_REQUIRED')return NextResponse.json({error:'Copy the configured Bitcoin address or confirm that you already have it before submitting this deposit.'},{status:400});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'A simulated Bitcoin display address is not configured. Contact an administrator before requesting a REAL deposit.'},{status:503});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_CHANGED')return NextResponse.json({error:'The simulated Bitcoin display address changed. Refresh the wallet and confirm the current address.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_INVALID')return NextResponse.json({error:'The administrator-configured simulated Bitcoin display address is invalid. Contact support.'},{status:503});
-		if(error instanceof Error&&error.message==='BTC_TRANSACTION_ID_REQUIRED')return NextResponse.json({error:'Enter a valid 64-character Bitcoin transaction ID.'},{status:400});
+		if(error instanceof Error&&error.message==='BTC_TRANSACTION_ID_INVALID')return NextResponse.json({error:'Enter a valid 64-character Bitcoin transaction ID or leave it blank.'},{status:400});
 		if(error instanceof Error&&error.message==='INVALID_BTC_AMOUNT')return NextResponse.json({error:'Enter a positive BTC amount with at most 8 decimal places.'},{status:400});
 		if(error instanceof Error&&error.message==='BTC_REAL_DEPOSIT_ONLY')return NextResponse.json({error:'BTC amounts are accepted only for REAL deposit requests.'},{status:400});
 		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];

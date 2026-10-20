@@ -46,7 +46,7 @@ export async function PATCH(req:Request){
 			if(admin.id===current.userId)throw new Error('FUNDING_SELF_REVIEW_FORBIDDEN');
 			const bitcoinDeposit=current.accountMode===AccountMode.REAL&&current.type===FundingType.DEPOSIT&&current.currency==='BTC'&&current.network==='BITCOIN'&&current.method===BTC_FUNDING_METHOD;
 			if(current.currency==='BTC'&&!bitcoinDeposit)throw new Error('BTC_DEPOSIT_RECORD_INVALID');
-			if(bitcoinDeposit&&(!normalizeBitcoinTransactionId(current.transactionReference||'')||!current.receiptKey))throw new Error('BTC_DEPOSIT_EVIDENCE_INCOMPLETE');
+			if(bitcoinDeposit&&(!current.receiptKey||(current.transactionReference&&!normalizeBitcoinTransactionId(current.transactionReference))))throw new Error('BTC_DEPOSIT_EVIDENCE_INCOMPLETE');
 			if(input.decision==='VERIFIED'){
 				if(!bitcoinDeposit)throw new Error('BTC_DEPOSIT_REQUIRED');
 				if(current.verifiedAt)return current;
@@ -122,7 +122,7 @@ export async function PATCH(req:Request){
 		if(error instanceof Error&&error.message==='FUNDING_SELF_REVIEW_FORBIDDEN')return NextResponse.json({error:'Administrators cannot review their own funding requests.'},{status:403});
 		if(error instanceof Error&&error.message==='BTC_DEPOSIT_REQUIRED')return NextResponse.json({error:'Manual verification is available only for REAL Bitcoin deposit requests.'},{status:409});
 		if(error instanceof Error&&error.message==='BTC_DEPOSIT_RECORD_INVALID')return NextResponse.json({error:'This BTC funding record is invalid and cannot be approved.'},{status:409});
-		if(error instanceof Error&&error.message==='BTC_DEPOSIT_EVIDENCE_INCOMPLETE')return NextResponse.json({error:'A valid transaction ID and private receipt screenshot are required.'},{status:409});
+		if(error instanceof Error&&error.message==='BTC_DEPOSIT_EVIDENCE_INCOMPLETE')return NextResponse.json({error:'A private receipt screenshot and, if supplied, a valid transaction ID are required.'},{status:409});
 		if(error instanceof Error&&error.message==='BTC_DEPOSIT_NOT_VERIFIED')return NextResponse.json({error:'Manually verify the Bitcoin transaction and receipt before approving a wallet credit.'},{status:409});
 		if(error instanceof Error&&error.message==='BTC_USD_CREDIT_REQUIRED')return NextResponse.json({error:'Enter the USD credit amount after manually verifying the Bitcoin transaction.'},{status:400});
 		if(error instanceof Error&&error.message==='INVALID_ROUNDED_CREDIT')return NextResponse.json({error:'Enter a positive USD amount with at least one cent to credit.'},{status:400});

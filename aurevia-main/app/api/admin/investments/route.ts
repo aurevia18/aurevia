@@ -4,9 +4,11 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
-import {InvestmentAction,nextInvestmentStatus,principalOnlySettlement} from '@/lib/investment-policy';
+import {InvestmentAction,nextInvestmentStatus,simulatedInvestmentSettlement} from '@/lib/investment-policy';
 import {createNotification} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
+import {configuredTierBoost} from '@/lib/tier-boosts';
+import {postSimulatedInvestmentPayout} from '@/lib/investment-ledger';
 
 export const dynamic='force-dynamic';
 
@@ -86,7 +88,7 @@ export async function POST(request:Request){
      return {investment:prior,replay:true};
     }
     const [user,opportunity]=await Promise.all([
-     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true}}),
+     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true,approvedTier:true}}),
      tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
     ]);
     if(!user||user.status!=='ACTIVE'||user.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
@@ -97,16 +99,17 @@ export async function POST(request:Request){
     if(opportunity.startsAt&&input.startsAt<opportunity.startsAt)throw new Error('INVESTMENT_NOT_STARTED');
     const amount=requestedAmount;
     const targetReturnPercent=input.targetReturnPercent===null?opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
+    const tierBoostPercent=await configuredTierBoost(tx,user.approvedTier);
     const now=new Date();
     const status=input.startsAt<=now?InvestmentStatus.ACTIVE:InvestmentStatus.APPROVED;
-    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount,status,idempotencyKey,targetReturnPercent,durationDays,approvedAt:now,activatedAt:input.startsAt,maturesAt:input.maturesAt}});
+    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount,status,idempotencyKey,targetReturnPercent,tierBoostPercent,durationDays,approvedAt:now,activatedAt:input.startsAt,maturesAt:input.maturesAt}});
     const userAccount=await ensureUserLedger(tx,user.id,input.accountMode,'USD');
     const available=await balance(tx,userAccount.id);
     const reserved=await reservedWithdrawalAmount(tx,user.id,input.accountMode,'USD');
     if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
     const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${input.accountMode}:USD`,`${input.accountMode} simulated investment escrow`,'USD',input.accountMode);
     await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve simulated funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
-    await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
+    await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,tierBoostPercent:tierBoostPercent.toString(),durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
     await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:'Simulated investment initiated',message:`An administrator initiated the ${opportunity.title} simulated investment. ${status===InvestmentStatus.ACTIVE?'It is active now.':`It is scheduled to start ${input.startsAt.toISOString()}.`} The principal was reserved in the internal ledger.`,dedupeKey:`investment:${investment.id}:admin-initiated`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
     return {investment,replay:false};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
@@ -167,7 +170,7 @@ export async function PATCH(request:Request){
    let settlementReference:string|undefined;
   let simulatedPayout:Prisma.Decimal|undefined;
    if(action==='settle'){
-   simulatedPayout=principalOnlySettlement(current.amount);
+   simulatedPayout=simulatedInvestmentSettlement(current.amount,current.targetReturnPercent,current.tierBoostPercent);
     settlementReference=`SIMULATED-SETTLEMENT:${current.accountMode}:${current.id}`;
    }
    const now=new Date();
@@ -197,15 +200,12 @@ export async function PATCH(request:Request){
    if(action==='settle'){
     const reservation=await tx.ledgerTransaction.findUnique({where:{reference:`INVESTMENT:${current.id}:RESERVE`},select:{id:true}});
     if(!reservation)throw new Error('SIMULATED_INVESTMENT_RESERVATION_MISSING');
-    const principal=simulatedPayout!;
-    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${current.accountMode}:USD`,`${current.accountMode} simulated investment escrow`,'USD',current.accountMode);
-    const userAccount=await ensureUserLedger(tx,current.userId,current.accountMode,'USD');
-    if(principal.gt(0))await postDoubleEntry(tx,{reference:`INVESTMENT:${current.id}:PAYOUT`,description:`Simulated principal and payout for ${current.opportunity.title}`,debitAccountId:escrow.id,creditAccountId:userAccount.id,amount:principal});
+    await postSimulatedInvestmentPayout(tx,{investmentId:current.id,userId:current.userId,accountMode:current.accountMode,principal:current.amount,payout:simulatedPayout!,opportunityTitle:current.opportunity.title});
    }
    const updated=await tx.investmentRequest.findUniqueOrThrow({where:{id:current.id}});
   await tx.auditLog.create({data:{actorId:admin.id,action:`INVESTMENT_${nextStatus}`,entity:'INVESTMENT',entityId:current.id,metadata:{oldState:current.status,newState:nextStatus,accountMode:current.accountMode,simulated:true,amount:current.amount.toString(),externalExecutionReference:null,settlementReference:settlementReference||null,simulatedPayout:simulatedPayout?.toString()??null,note:input.note||null}}});
    const statusText=nextStatus.toLowerCase().replaceAll('_',' ');
-   const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity. At settlement, only the reserved principal is returned; configured target returns are estimates and are not credited as earnings.`;
+   const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity. At settlement, the simulated payout is calculated from the configured target return and the tier boost captured when this allocation was created; no return is guaranteed.`;
    await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`Investment ${statusText}`,message,dedupeKey:`investment:${current.id}:${nextStatus}:${updated.updatedAt.toISOString()}`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
    return updated;
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});

@@ -1,7 +1,7 @@
-import DashboardExperience from '@/components/DashboardExperience';
+import PortfolioExperience from '@/components/PortfolioExperience';
 
 export const dynamic='force-dynamic';
 
 export default function Dashboard(){
-  return <DashboardExperience/>;
+  return <PortfolioExperience/>;
 }

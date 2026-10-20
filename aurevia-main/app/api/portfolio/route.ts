@@ -17,7 +17,7 @@ export async function GET(){
  try{
   const user=await requireUser();
   const mode=user.accountMode;
-  const [account,positions,realizedAggregate,investments,settledInvestments,depositAggregate,withdrawalAggregate]=await Promise.all([
+  const [account,positions,realizedAggregate,investments,settledInvestments,depositAggregate,withdrawalAggregate,recentFunding,availableOpportunities]=await Promise.all([
    db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${mode}:USD`},select:{id:true,startingBalance:true}}),
    db.position.findMany({where:{userId:user.id,accountMode:mode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'asc'}}),
    db.position.aggregate({where:{userId:user.id,accountMode:mode},_sum:{realizedPnl:true}}),
@@ -30,6 +30,8 @@ export async function GET(){
     _sum:{amount:true,creditedAmount:true},
    }),
    db.fundingRequest.aggregate({where:{userId:user.id,accountMode:mode,currency:'USD',type:FundingType.WITHDRAWAL,status:{in:[FundingStatus.APPROVED,FundingStatus.COMPLETED]}},_sum:{amount:true}}),
+   db.fundingRequest.findMany({where:{userId:user.id,accountMode:mode},select:{id:true,type:true,method:true,amount:true,currency:true,status:true,createdAt:true},orderBy:{createdAt:'desc'},take:5}),
+   db.investmentOpportunity.findMany({where:{status:'AVAILABLE',...(mode===AccountMode.DEMO?{demoEligible:true}:{realEligible:true})},select:{id:true,title:true,category:true,assetSymbol:true,minimumAmount:true,targetReturnPercent:true,durationDays:true,riskLevel:true},orderBy:{createdAt:'desc'},take:3}),
   ]);
   const cashBalance=account?await balance(db,account.id):zero();
   let positionValue=zero();
@@ -63,6 +65,15 @@ export async function GET(){
   const dailyPnl=todaySnapshots.length>1?totalValue.minus(todaySnapshots[0].totalValue):null;
   const dailyPercent=dailyPnl&&todaySnapshots[0].totalValue.gt(0)?dailyPnl.div(todaySnapshots[0].totalValue).mul(100):null;
   const holdings=[
+   ...(cashBalance.gt(0)?[{
+    id:'CASH:USD',
+    name:'Cash and buying power',
+    category:'Cash',
+    invested:zero(),
+    value:cashBalance,
+    gainLoss:zero(),
+    status:'AVAILABLE',
+   }]:[]),
    ...valuedPositions.map(position=>({
     id:`POSITION:${position.id}`,
     name:position.instrument.name,
@@ -86,7 +97,8 @@ export async function GET(){
   for(const holding of holdings)allocationValues.set(holding.category,(allocationValues.get(holding.category)??zero()).plus(holding.value));
   const allocations=calculateAllocationPercentages([...allocationValues].map(([category,value])=>({category,value})));
   const rankedPositions=valuedPositions.filter(position=>position.unrealizedPnl!==null).toSorted((left,right)=>Number(right.unrealizedPnl)-Number(left.unrealizedPnl));
-  const response={accountMode:mode,currency:'USD',cashBalance,positionValue,investmentValue,totalValue,realizedPnl,unrealizedPnl,totalPnl,returnPercent,dailyPnl,dailyPercent,positions:valuedPositions,investments,holdings,totalInvested:holdings.reduce((sum,item)=>sum.plus(item.invested),zero()),totalCurrentValue:positionValue.plus(investmentValue),allocations,topGainers:rankedPositions.slice(0,3),topLosers:rankedPositions.slice(-3).reverse(),performance:performance.toReversed(),marketDataMode:'SIMULATED',externalValuationAvailable:false};
+  const totalInvested=valuedPositions.reduce((sum,item)=>sum.plus(item.entryPrice.mul(item.quantity)),zero()).plus(investedRequests.reduce((sum,item)=>sum.plus(item.amount),zero()));
+  const response={accountMode:mode,currency:'USD',cashBalance,positionValue,investmentValue,totalValue,realizedPnl,unrealizedPnl,totalPnl,returnPercent,dailyPnl,dailyPercent,positions:valuedPositions,investments,holdings,totalInvested,totalCurrentValue:totalValue,allocations,recentFunding,availableOpportunities,topGainers:rankedPositions.slice(0,3),topLosers:rankedPositions.slice(-3).reverse(),performance:performance.toReversed(),marketDataMode:'SIMULATED',externalValuationAvailable:false};
   return NextResponse.json(jsonSafe(response),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   return NextResponse.json({error:error instanceof Error&&error.message==='UNAUTHORIZED'?'Unauthorized':'Portfolio data is temporarily unavailable.'},{status:error instanceof Error&&error.message==='UNAUTHORIZED'?401:503,headers:{'Cache-Control':'private, no-store'}});

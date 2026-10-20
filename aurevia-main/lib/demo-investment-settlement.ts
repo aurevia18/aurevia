@@ -1,8 +1,8 @@
 import {AccountMode,InvestmentStatus,NotificationType,Prisma} from '@prisma/client';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
-import {ensureSystemAccount,ensureUserLedger,postDoubleEntry} from '@/lib/ledger';
-import {principalOnlySettlement} from '@/lib/investment-policy';
+import {postSimulatedInvestmentPayout} from '@/lib/investment-ledger';
+import {simulatedInvestmentSettlement} from '@/lib/investment-policy';
 
 const batchSize=100;
 
@@ -37,16 +37,14 @@ export async function settleMaturedSimulatedInvestments(now=new Date()){
 			if(!current||current.status!==InvestmentStatus.ACTIVE||!current.maturesAt||current.maturesAt>now)return false;
 			const reservation=await tx.ledgerTransaction.findUnique({where:{reference:`INVESTMENT:${current.id}:RESERVE`},select:{id:true}});
 			if(!reservation)return false;
-			const payout=principalOnlySettlement(current.amount);
+			const payout=simulatedInvestmentSettlement(current.amount,current.targetReturnPercent,current.tierBoostPercent);
 			const settlementReference=`SIMULATED-AUTO-SETTLEMENT:${current.accountMode}:${current.id}`;
 			const changed=await tx.investmentRequest.updateMany({where:{id:current.id,accountMode:current.accountMode,status:InvestmentStatus.ACTIVE,maturesAt:{lte:now}},data:{status:InvestmentStatus.SETTLED,completedAt:current.completedAt??now,settledAt:now,settlementReference,simulatedPayout:payout}});
 			if(changed.count!==1)return false;
 
-			const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${current.accountMode}:USD`,`${current.accountMode} simulated investment escrow`,'USD',current.accountMode);
-			const userAccount=await ensureUserLedger(tx,current.userId,current.accountMode,'USD');
-			if(payout.gt(0))await postDoubleEntry(tx,{reference:`INVESTMENT:${current.id}:PAYOUT`,description:`Return reserved principal for ${current.opportunity.title}; no estimated return was credited`,debitAccountId:escrow.id,creditAccountId:userAccount.id,amount:payout});
-			await tx.auditLog.create({data:{actorId:null,action:'SIMULATED_INVESTMENT_AUTO_SETTLED',entity:'INVESTMENT',entityId:current.id,metadata:{accountMode:current.accountMode,simulated:true,principal:current.amount.toString(),targetReturnPercent:current.targetReturnPercent?.toString()??null,simulatedPayout:payout.toString(),settlementReference}}});
-			await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`${current.accountMode} simulated investment matured`,message:`Your ${current.accountMode} simulated investment matured and the reserved principal of ${payout.toFixed(2)} USD was returned. Configured target returns are estimates only and were not credited as earnings.`,dedupeKey:`investment:${current.id}:auto-settled`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
+			await postSimulatedInvestmentPayout(tx,{investmentId:current.id,userId:current.userId,accountMode:current.accountMode,principal:current.amount,payout,opportunityTitle:current.opportunity.title});
+			await tx.auditLog.create({data:{actorId:null,action:'SIMULATED_INVESTMENT_AUTO_SETTLED',entity:'INVESTMENT',entityId:current.id,metadata:{accountMode:current.accountMode,simulated:true,principal:current.amount.toString(),targetReturnPercent:current.targetReturnPercent?.toString()??null,tierBoostPercent:current.tierBoostPercent.toString(),simulatedPayout:payout.toString(),settlementReference}}});
+			await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`${current.accountMode} simulated investment matured`,message:`Your ${current.accountMode} simulated investment matured and a simulated payout of ${payout.toFixed(2)} USD was credited to your internal ledger. The payout used the configured target return and the tier boost captured when you allocated; simulated returns are not guaranteed.`,dedupeKey:`investment:${current.id}:auto-settled`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
 			return true;
 				},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 				break;

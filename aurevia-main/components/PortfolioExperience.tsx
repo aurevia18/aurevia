@@ -1,8 +1,9 @@
 'use client';
 
 import {FormEvent,useCallback,useEffect,useMemo,useState} from 'react';
+import type {CSSProperties} from 'react';
 import {Area,AreaChart,CartesianGrid,Cell,Pie,PieChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
-import {ArrowDownLeft,ArrowUpRight,Briefcase,FileClock,RefreshCw,TrendingUp} from 'lucide-react';
+import {ArrowDownLeft,ArrowUpRight,Bitcoin,Briefcase,BriefcaseBusiness,Building2,CircleDollarSign,Coins,FileClock,Gem,RefreshCw,TrendingUp} from 'lucide-react';
 import Link from 'next/link';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
@@ -14,8 +15,10 @@ type Position={id:string;side:string;quantity:string;entryPrice:string;currentPr
 type Snapshot={snapshotBucket:string;totalValue:string};
 type Holding={id:string;name:string;category:string;invested:string;value:string;gainLoss:string;status:string};
 type Allocation={category:string;value:string;percentage:string};
-type Investment={id:string;status:string;amount:string;simulatedPayout:string|null;requestedAt:string;settlementReference:string|null;opportunity:{title:string;category:string;assetSymbol:string|null;riskLevel:string;durationDays:number}};
-type Portfolio={accountMode:'DEMO'|'REAL';cashBalance:string;positionValue:string;investmentValue:string;totalValue:string;totalInvested:string;totalCurrentValue:string;realizedPnl:string|null;unrealizedPnl:string|null;totalPnl:string|null;returnPercent:string|null;dailyPnl:string|null;dailyPercent:string|null;positions:Position[];investments:Investment[];holdings:Holding[];allocations:Allocation[];topGainers:Position[];topLosers:Position[];performance:Snapshot[];marketDataMode:string;externalValuationAvailable:boolean};
+type Investment={id:string;status:string;amount:string;tierBoostPercent:string;targetReturnPercent:string|null;simulatedPayout:string|null;requestedAt:string;settlementReference:string|null;opportunity:{title:string;category:string;assetSymbol:string|null;riskLevel:string;durationDays:number}};
+type FundingActivity={id:string;type:string;method:string;amount:string;currency:string;status:string;createdAt:string};
+type AvailableOpportunity={id:string;title:string;category:string;assetSymbol:string|null;minimumAmount:string;targetReturnPercent:string|null;durationDays:number;riskLevel:string};
+type Portfolio={accountMode:'DEMO'|'REAL';cashBalance:string;positionValue:string;investmentValue:string;totalValue:string;totalInvested:string;totalCurrentValue:string;realizedPnl:string|null;unrealizedPnl:string|null;totalPnl:string|null;returnPercent:string|null;dailyPnl:string|null;dailyPercent:string|null;positions:Position[];investments:Investment[];holdings:Holding[];allocations:Allocation[];recentFunding:FundingActivity[];availableOpportunities:AvailableOpportunity[];topGainers:Position[];topLosers:Position[];performance:Snapshot[];marketDataMode:string;externalValuationAvailable:boolean};
 type ChartPoint=Snapshot&{periodChange:number};
 type ChartTooltipProps={active?:boolean;payload?:Array<{payload:ChartPoint}>;label?:string};
 
@@ -30,6 +33,9 @@ const timeframes:Array<{value:PortfolioTimeframe;label:string}>=[
 const categoryColors=['#f97316','#3b82f6','#eab308','#94a3b8','#00e676','#a78bfa'];
 
 function money(value:string|number|null|undefined){return value===null||value===undefined?'—':formatUsd(value);}
+function fundingAmount(value:string,currency:string){
+	return currency==='USD'?money(value):`${new Intl.NumberFormat('en-US',{maximumFractionDigits:8}).format(Number(value))} ${currency}`;
+}
 function signed(value:string|number|null|undefined){if(value===null||value===undefined)return 'Unavailable';const number=Number(value);return `${number>=0?'+':''}${money(number)}`;}
 function percentage(value:string|number|null|undefined){if(value===null||value===undefined)return 'Unavailable';const number=Number(value);return `${number>=0?'+':''}${number.toFixed(2)}%`;}
 function categoryColor(category:string,index:number){
@@ -38,7 +44,13 @@ function categoryColor(category:string,index:number){
 	if(normalized.includes('equity')||normalized.includes('share'))return '#3b82f6';
 	if(normalized.includes('gold'))return '#eab308';
 	if(normalized.includes('silver'))return '#94a3b8';
+	if(normalized.includes('cash'))return '#22c55e';
 	return categoryColors[index%categoryColors.length];
+}
+function AssetIcon({category,name}:{category:string;name:string}){
+	const normalized=`${category} ${name}`.toLowerCase();
+	const Icon=normalized.includes('crypto')||normalized.includes('bitcoin')?Bitcoin:normalized.includes('gold')||normalized.includes('silver')?Gem:normalized.includes('equity')||normalized.includes('share')||normalized.includes('stock')?Building2:normalized.includes('cash')?CircleDollarSign:normalized.includes('metal')?Coins:BriefcaseBusiness;
+	return <span className="portfolio-asset-icon" style={{'--asset-color':categoryColor(category,0)} as CSSProperties} aria-hidden="true"><Icon size={17} strokeWidth={2.1}/></span>;
 }
 function ChartTooltip({active,payload,label}:ChartTooltipProps){
 	if(!active||!payload?.length)return null;
@@ -100,7 +112,7 @@ export default function PortfolioExperience(){
 		<header className="account-heading portfolio-heading">
 			<div><span className="account-kicker">{translate('accountOverview')}</span><h1>My Portfolio</h1><p>Account-specific balances, holdings, investments and recorded performance.</p></div>
 			<div className="portfolio-heading-actions">
-				<span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?translate('portfolioAccount',{mode:data.accountMode}):translate('portfolioLoadingAccount')}</span>
+				<span className={`status-pill ${data?.accountMode==='REAL'?'mode-real':'mode-demo'}`}><i className="portfolio-live-dot" aria-hidden="true"/>{data?translate('portfolioAccount',{mode:data.accountMode}):translate('portfolioLoadingAccount')}</span>
 				<button className="icon-action" type="button" aria-label={translate('portfolioRefresh')} onClick={()=>void load(true)}><RefreshCw size={15}/></button>
 			</div>
 		</header>
@@ -172,10 +184,10 @@ export default function PortfolioExperience(){
 						<label className="account-label">Category<select className="input" value={holdingCategory} onChange={event=>setHoldingCategory(event.target.value)}><option value="ALL">All categories</option>{holdingCategories.map(category=><option key={category}>{category}</option>)}</select></label>
 					</div>
 					{visibleHoldings.length===0?<p className="account-empty">No holdings match these filters.</p>:<>
-						<div className="portfolio-holdings-head" aria-hidden="true"><span>Asset</span><span>Allocation</span><span>Invested</span><span>Current value</span><span>Gain / loss</span></div>
+						<div className="portfolio-holdings-head" aria-hidden="true"><span>Asset class</span><span>% of portfolio</span><span>Invested</span><span>Current value</span><span>Gain (all time)</span></div>
 						<div className="portfolio-holdings">{visibleHoldings.map(holding=><details className="portfolio-holding" key={holding.id}>
-							<summary><span className="portfolio-holding-asset"><b>{holding.name}</b><small>{holding.category} · {holding.status.replaceAll('_',' ').toLowerCase()}</small></span><span>{holding.category}</span><span>{money(holding.invested)}</span><span>{money(holding.value)}</span><strong className={Number(holding.gainLoss)>=0?'text-profit':'text-loss'}>{signed(holding.gainLoss)}</strong></summary>
-							<dl><div><dt>Recorded asset</dt><dd>{holding.name}</dd></div><div><dt>Category</dt><dd>{holding.category}</dd></div><div><dt>Position status</dt><dd>{holding.status.replaceAll('_',' ')}</dd></div><div><dt>Valuation source</dt><dd>{data.marketDataMode} account record</dd></div></dl>
+							<summary><span className="portfolio-holding-asset"><AssetIcon category={holding.category} name={holding.name}/><span><b>{holding.name}</b><small>{holding.category} · {holding.status.replaceAll('_',' ').toLowerCase()}</small></span></span><span>{Number(data.totalValue)>0?`${(Number(holding.value)/Number(data.totalValue)*100).toFixed(1)}%`:'0.0%'}</span><span>{money(holding.invested)}</span><span>{money(holding.value)}</span><strong className={Number(holding.gainLoss)>=0?'text-profit':'text-loss'}>{signed(holding.gainLoss)}</strong></summary>
+							<dl><div><dt>Recorded asset</dt><dd>{holding.name}</dd></div><div><dt>Category</dt><dd>{holding.category}</dd></div><div><dt>Portfolio share</dt><dd>{Number(data.totalValue)>0?`${(Number(holding.value)/Number(data.totalValue)*100).toFixed(2)}%`:'0.00%'}</dd></div><div><dt>Position status</dt><dd>{holding.status.replaceAll('_',' ')}</dd></div><div><dt>Valuation source</dt><dd>{data.marketDataMode} account record</dd></div></dl>
 						</details>)}</div>
 					</>}
 				</>}
@@ -183,14 +195,22 @@ export default function PortfolioExperience(){
 			<section className="portfolio-footer-summary" aria-label="Portfolio totals">
 				<article><span>Total invested</span><b>{money(data.totalInvested)}</b></article>
 				<article><span>Current invested value</span><b>{money(data.totalCurrentValue)}</b></article>
-				<article><span>Recorded gain / loss</span><b className={positive?'text-profit':'text-loss'}>{signed(data.totalPnl)}</b></article>
+				<article><span>Total gain</span><b className={positive?'text-profit':'text-loss'}>{signed(data.totalPnl)}</b></article>
 			</section>
 			<section className="account-panel card p-5 mt-4">
 				<div className="account-panel-title"><div><h2>Investment activity</h2><p className="account-panel-subtitle">Configured terms, actual statuses, and persisted simulated outcomes</p></div><Link className="text-link" href="/investments">Browse opportunities <TrendingUp size={14}/></Link></div>
 				{data.investments.length?<div className="portfolio-investment-list">{data.investments.map(item=>{
 					const payout=item.simulatedPayout===null?null:Number(item.simulatedPayout)-Number(item.amount);
-					return <details key={item.id} className="portfolio-investment-row"><summary><span><b>{item.opportunity.title}</b><small>{item.opportunity.category} · {money(item.amount)} principal</small></span><span className={`status-pill ${data.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{item.status.replaceAll('_',' ')}</span></summary><dl><div><dt>Configured duration</dt><dd>{item.opportunity.durationDays} days</dd></div><div><dt>Risk classification</dt><dd>{item.opportunity.riskLevel.replaceAll('_',' ')}</dd></div><div><dt>Simulated result</dt><dd>{item.simulatedPayout===null?'Not settled':`${money(item.simulatedPayout)} payout · ${signed(payout)}`}</dd></div><div><dt>Reference</dt><dd className="break-all">{item.settlementReference||'Not settled'}</dd></div><div><dt>Requested</dt><dd>{new Date(item.requestedAt).toLocaleString()}</dd></div></dl><small>Any configured target return is an estimate only. Simulated gains are not REAL wallet funds.</small></details>;
+					return <details key={item.id} className="portfolio-investment-row"><summary><span><b>{item.opportunity.title}</b><small>{item.opportunity.category} · {money(item.amount)} principal</small></span><span className={`status-pill ${data.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{item.status.replaceAll('_',' ')}</span></summary><dl><div><dt>Configured duration</dt><dd>{item.opportunity.durationDays} days</dd></div><div><dt>Risk classification</dt><dd>{item.opportunity.riskLevel.replaceAll('_',' ')}</dd></div><div><dt>Target return</dt><dd>{percentage(item.targetReturnPercent)}</dd></div><div><dt>Captured tier boost</dt><dd>{percentage(item.tierBoostPercent)}</dd></div><div><dt>Simulated result</dt><dd>{item.simulatedPayout===null?'Not settled':`${money(item.simulatedPayout)} payout · ${signed(payout)}`}</dd></div><div><dt>Reference</dt><dd className="break-all">{item.settlementReference||'Not settled'}</dd></div><div><dt>Requested</dt><dd>{new Date(item.requestedAt).toLocaleString()}</dd></div></dl><small>Simulated returns are estimates, not guarantees or external assets.</small></details>;
 				})}</div>:<p className="account-empty">No investment requests are recorded in this account.</p>}
+			</section>
+			<section className="account-panel card p-5 mt-4">
+				<div className="account-panel-title"><div><h2>Recent funding</h2><p className="account-panel-subtitle">Latest deposit and withdrawal requests for this account.</p></div><Link className="text-link" href="/wallet/transactions">Full history <FileClock size={14}/></Link></div>
+				{data.recentFunding.length?<div className="portfolio-investment-list">{data.recentFunding.map(item=><Link className="portfolio-recent-funding" href={`/wallet/transactions/${encodeURIComponent(item.id)}`} key={item.id}><span className="portfolio-recent-funding-icon">{item.type==='DEPOSIT'?<ArrowDownLeft size={16}/>:<ArrowUpRight size={16}/>}</span><span><b>{item.type} · {fundingAmount(item.amount,item.currency)}</b><small>{item.method} · {new Date(item.createdAt).toLocaleString()}</small></span><span className="status-pill">{item.status.replaceAll('_',' ')}</span></Link>)}</div>:<p className="account-empty">No recent funding requests in this account.</p>}
+			</section>
+			<section className="account-panel card p-5 mt-4">
+				<div className="account-panel-title"><div><h2>Investment opportunities</h2><p className="account-panel-subtitle">Available simulated allocations that can be funded from your account balance.</p></div><Link className="text-link" href="/investments">Explore all <TrendingUp size={14}/></Link></div>
+				{data.availableOpportunities.length?<div className="portfolio-opportunity-grid">{data.availableOpportunities.map(item=><Link className="portfolio-opportunity-card" href="/investments" key={item.id}><span><AssetIcon category={item.category} name={item.assetSymbol||item.title}/></span><b>{item.title}</b><small>{item.category} · {item.riskLevel.replaceAll('_',' ')}</small><span className="portfolio-opportunity-terms">Min. {money(item.minimumAmount)}{item.targetReturnPercent===null?'':` · Target ${percentage(item.targetReturnPercent)}`}</span></Link>)}</div>:<p className="account-empty">There are no available opportunities for this account right now.</p>}
 			</section>
 			<section className="account-panel card p-5 mt-4">
 				<div className="account-panel-title"><div><h2>Simulated position details</h2><p className="account-panel-subtitle">Positions are kept separate from investment opportunity allocations.</p></div></div>

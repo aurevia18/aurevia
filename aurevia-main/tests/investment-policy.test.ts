@@ -1,6 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {InvestmentStatus,Prisma} from '@prisma/client';
-import {nextInvestmentStatus,principalOnlySettlement,recordedInvestmentPnl,validateInvestmentSettlement} from '../lib/investment-policy';
+import {nextInvestmentStatus,principalOnlySettlement,recordedInvestmentPnl,simulatedInvestmentSettlement,validateInvestmentSettlement} from '../lib/investment-policy';
 
 describe('investment lifecycle policy',()=>{
  it('allows only explicit lifecycle transitions',()=>{
@@ -18,10 +18,18 @@ describe('investment lifecycle policy',()=>{
   expect(()=>validateInvestmentSettlement(100)).not.toThrow();
  });
 
- it('keeps configured target returns as estimates rather than settled earnings',()=>{
+ it('records no profit until a simulated investment has settled',()=>{
   const reservedPrincipal=new Prisma.Decimal('1000.00');
   expect(principalOnlySettlement(reservedPrincipal).toFixed(2)).toBe('1000.00');
   expect(recordedInvestmentPnl(reservedPrincipal,null).toFixed(2)).toBe('0.00');
   expect(recordedInvestmentPnl(reservedPrincipal,reservedPrincipal).toFixed(2)).toBe('0.00');
+ });
+
+ it('applies the target return and the boost captured for new allocations at simulated settlement',()=>{
+  const principal=new Prisma.Decimal('1000');
+  expect(simulatedInvestmentSettlement(principal,new Prisma.Decimal('8'),new Prisma.Decimal('2')).toFixed(2)).toBe('1100.00');
+  expect(simulatedInvestmentSettlement(principal,new Prisma.Decimal('8'),new Prisma.Decimal('0')).toFixed(2)).toBe('1080.00');
+  expect(simulatedInvestmentSettlement(principal,new Prisma.Decimal('-50'),new Prisma.Decimal('0')).toFixed(2)).toBe('500.00');
+  expect(simulatedInvestmentSettlement(principal,new Prisma.Decimal('-100'),new Prisma.Decimal('0')).toFixed(2)).toBe('0.00');
  });
 });

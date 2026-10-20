@@ -694,6 +694,7 @@ model InvestmentRequest {
   status                     InvestmentStatus      @default(PENDING_APPROVAL)
   idempotencyKey             String                @unique
   targetReturnPercent        Decimal?              @db.Decimal(10, 6)
+  tierBoostPercent           Decimal               @default(0) @db.Decimal(10, 6)
   durationDays               Int
   requestedAt                DateTime              @default(now())
   approvedAt                 DateTime?

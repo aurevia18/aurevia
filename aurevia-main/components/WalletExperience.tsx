@@ -131,8 +131,8 @@ export default function WalletExperience(){
 	const realKycApproved=profile?.kycStatus==='APPROVED'&&profile.documents>0&&profile.verificationProfileSubmitted;
 	const realWithdrawalBlocked=data.accountMode==='REAL'&&!!profile&&(!profile.withdrawalEnabled||profile.accountRestricted);
 	const realBitcoinDeposit=data.accountMode==='REAL'&&type==='DEPOSIT';
-	const bitcoinDepositReady=!realBitcoinDeposit||!!transactionReference.trim()&&!!proofFile;
-	const bitcoinDisplayAddress=data.accountMode==='DEMO'?simulatedBitcoinAddress:'';
+	const bitcoinDepositReady=!realBitcoinDeposit||!!proofFile;
+	const bitcoinDisplayAddress=type==='DEPOSIT'?simulatedBitcoinAddress:'';
 
 	const load=useCallback(async(showLoading=false)=>{
 		if(showLoading)setLoading(true);
@@ -243,7 +243,7 @@ export default function WalletExperience(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selectedMethod&&!manualRealFunding)return;
-		if(realBitcoinDeposit&&(!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim())||!proofFile)){setError('Enter the Bitcoin transaction ID and attach its screenshot.');return;}
+		if(realBitcoinDeposit&&(!proofFile||transactionReference.trim()&&!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim()))){setError('Attach the receipt screenshot and enter a valid transaction ID if available.');return;}
 		if(type==='DEPOSIT'&&bitcoinDisplayAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		const minimumAmount=realBitcoinDeposit?0.00000001:selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
@@ -256,7 +256,7 @@ export default function WalletExperience(){
 
 	async function confirmSubmit(){
 		if((!selectedMethod&&!manualRealFunding)||submitting)return;
-		if(realBitcoinDeposit&&(!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim())||!proofFile)){setError('Enter the Bitcoin transaction ID and attach its screenshot.');return;}
+		if(realBitcoinDeposit&&(!proofFile||transactionReference.trim()&&!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim()))){setError('Attach the receipt screenshot and enter a valid transaction ID if available.');return;}
 		if(type==='DEPOSIT'&&bitcoinDisplayAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
@@ -333,7 +333,7 @@ export default function WalletExperience(){
 				<div className="text-xs uppercase tracking-[0.18em] text-emerald-200/80">{data.accountMode==='DEMO'?'Internal virtual DEMO balance':'Aurevia REAL internal ledger balance · separate from Alpaca Paper'}</div>
 				<div className="wallet-balance-value mt-2 text-3xl font-semibold text-white">{loading?translate('loading'):!hasWalletData||data.balance===null?'Unavailable':balanceVisible?money(Number(data.balance),'USD'):'•••••• USD'}</div>
 				<div className="mt-1 text-sm text-slate-300">USD account balance and pending review totals</div>
-				{data.accountMode==='REAL'&&<div className="mt-3 border-t border-white/10 pt-3 text-sm text-slate-300">Eligible withdrawal balance · verified BTC credits only: <b className="text-white">{loading||!hasWalletData||data.withdrawableBalance===null||data.withdrawableBalance===undefined?'Unavailable':balanceVisible?money(Number(data.withdrawableBalance),'USD'):'•••••• USD'}</b><p className="mt-1 text-xs muted">No external payout provider is configured. An approved request remains reserved and is not completed or paid.</p></div>}
+				{data.accountMode==='REAL'&&				<div className="mt-3 border-t border-white/10 pt-3 text-sm text-slate-300">Eligible withdrawal balance • verified BTC credits only: <b className="text-white">{loading||!hasWalletData||data.withdrawableBalance===null||data.withdrawableBalance===undefined?'Unavailable':balanceVisible?money(Number(data.withdrawableBalance),'USD'):'•••••• USD'}</b><p className="mt-1 text-xs muted">No external payout provider is configured. An approved request remains reserved and is not completed or paid.</p></div>}
 			</div>
 			<p className="wallet-demo-note">{hasWalletData?translate('walletDemoNote'):'Balance could not be retrieved. No balance is assumed.'}</p>
 			<div className="wallet-currency-list">{data.balances.map(item=><span key={item.currency}>{balanceVisible?money(Number(item.balance),item.currency):`${item.currency} ••••••`}</span>)}</div>
@@ -364,18 +364,18 @@ export default function WalletExperience(){
 				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
 					{manualRealFunding&&!realBitcoinDeposit&&<div className="account-callout" role="status"><span>Requests are recorded in the {data.accountMode} internal ledger. No payment evidence or external destination is required.</span></div>}
-					{realBitcoinDeposit&&<div className="account-callout account-mode-notice" role="note"><span><strong>REAL BTC deposit request · manual review</strong><br/>Aurevia does not provide a BTC receiving address here. No payment processor, bank, or crypto network is contacted, and blockchain payments are not automatically confirmed. Do not send BTC based on this form. Submit details only for a transfer you have already made to a separately verified destination. An administrator must review the transaction and screenshot, then enter the USD wallet credit; BTC received is not automatically converted.</span></div>}
-					{type==='DEPOSIT'&&bitcoinDisplayAddress&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="DEMO simulated Bitcoin address">
-						<div><h3 className="font-semibold">DEMO simulated Bitcoin address display</h3><p className="mt-1 text-sm text-amber-100">Display and QR practice only. Do not send Bitcoin to this address. This platform does not monitor the Bitcoin network or credit real transfers.</p></div>
-						<label className="account-label">BTC address<input className="input font-mono" type="text" readOnly value={bitcoinDisplayAddress} placeholder="Configured DEMO display address" aria-describedby="simulated-bitcoin-address-note"/></label>
+					{realBitcoinDeposit&&<div className="account-callout account-mode-notice" role="note"><span><strong>BTC deposit request · manual review</strong><br/>Aurevia does not monitor the Bitcoin network or automatically confirm or convert transfers. Your screenshot and optional transaction ID are reviewed by an administrator; approval posts an explicit USD credit to your internal ledger. No external payment is processed by Aurevia.</span></div>}
+					{type==='DEPOSIT'&&bitcoinDisplayAddress&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="Administrator-posted Bitcoin deposit address">
+						<div><h3 className="font-semibold">Bitcoin deposit address</h3><p className="mt-1 text-sm text-amber-100">Confirm the address with the administrator before sending. Address display does not confirm a payment; only submit a receipt for a transfer you have already made.</p></div>
+						<label className="account-label">BTC address<input className="input font-mono" type="text" readOnly value={bitcoinDisplayAddress} aria-describedby="simulated-bitcoin-address-note"/></label>
 						<code id="simulated-bitcoin-address-note" className="block break-all rounded-lg bg-black/20 p-3 text-sm">{bitcoinDisplayAddress}</code>
 						{<>
 						<div className="flex flex-wrap items-center gap-3">
 							{bitcoinQr?<Image src={bitcoinQr} alt="QR code for the simulated Bitcoin address" width={160} height={160} unoptimized className="rounded bg-white p-2"/>:<p className="text-xs muted" role={bitcoinQrError?'alert':'status'}>{bitcoinQrError||'Preparing address QR code…'}</p>}
 							<div className="grid gap-2">
-								<button type="button" className="btn min-h-11 bg-white/5" onClick={()=>void copyDestination()}><Copy size={15}/>{copied?'Address copied':'Copy simulated Bitcoin address'}</button>
-								<button type="button" className="btn min-h-11 bg-white/5" aria-pressed={bitcoinAddressAcknowledged} onClick={()=>setBitcoinAddressAcknowledged(true)}>I scanned or copied this address</button>
-								{bitcoinAddressAcknowledged&&<span className="text-xs text-profit" role="status">Address acknowledged for this simulated request.</span>}
+								<button type="button" className="btn min-h-11 bg-white/5" onClick={()=>void copyDestination()}><Copy size={15}/>{copied?'Address copied':'Copy Address'}</button>
+								<button type="button" className="btn min-h-11 bg-white/5" aria-pressed={bitcoinAddressAcknowledged} onClick={()=>setBitcoinAddressAcknowledged(true)}>Skip – I already have the address</button>
+								{bitcoinAddressAcknowledged&&<span className="text-xs text-profit" role="status">Address confirmed for this request.</span>}
 							</div>
 						</div>
 						</>}
@@ -384,7 +384,7 @@ export default function WalletExperience(){
 						{!realBitcoinDeposit&&<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
 						<label className="account-label">{realBitcoinDeposit?'Bitcoin amount (BTC)':translate('amount',{currency})}<input className="input" type="number" min={realBitcoinDeposit?'0.00000001':type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step={realBitcoinDeposit?'0.00000001':'any'} inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder={realBitcoinDeposit?'0.00000000':'0.00'}/></label>
 						{realBitcoinDeposit&&<>
-							<label className="account-label">Bitcoin transaction ID<input className="input font-mono" type="text" required minLength={64} maxLength={64} pattern="[A-Fa-f0-9]{64}" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="64-character transaction hash"/></label>
+							<label className="account-label">Bitcoin transaction ID (optional)<input className="input font-mono" type="text" minLength={64} maxLength={64} pattern="[A-Fa-f0-9]{64}" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="64-character transaction hash, if available"/></label>
 							<label className="account-label">Receipt screenshot (required)<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required aria-label="Required screenshot for REAL BTC deposit review" onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">Image only, maximum 5 MB. The screenshot is stored privately and reviewed by an administrator; it is not blockchain confirmation.</small></label>
 						</>}
 						{type==='DEPOSIT'&&!realBitcoinDeposit?<>
@@ -396,8 +396,8 @@ export default function WalletExperience(){
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
 					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),realBitcoinDeposit?'BTC':currency)} via {realBitcoinDeposit?'REAL BTC manual verification':selectedMethod?.name||(manualRealFunding?'internal administrator review':'Manual administrator review')} in the {data.accountMode} account. {realBitcoinDeposit?'No transaction confirmation or USD conversion is automatic.':'This records a request for review and the ledger is posted only after approval.'}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady||realBitcoinDeposit&&!realKycApproved))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||availableBalance<=0))}>{realBitcoinDeposit?'Submit REAL BTC deposit request':type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
+					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),realBitcoinDeposit?'BTC':currency)} via {realBitcoinDeposit?'BTC manual review':selectedMethod?.name||(manualRealFunding?'internal administrator review':'Manual administrator review')} in the {data.accountMode} account. {realBitcoinDeposit?'The screenshot and optional transaction ID are reviewed manually; approval posts a USD ledger credit.':'This records a request for review and the ledger is posted only after approval.'}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady||realBitcoinDeposit&&!realKycApproved))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||availableBalance<=0))}>{realBitcoinDeposit?'Submit BTC deposit request':type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
 				</form>
 				</>
 			</section>

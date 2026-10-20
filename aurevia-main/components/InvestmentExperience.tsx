@@ -92,7 +92,7 @@ export default function InvestmentExperience(){
   if(allocation<Number(opportunity.minimumAmount)){setError('The available returned principal is below this opportunity’s minimum allocation.');return;}
   setError('');
   setAmounts(current=>({...current,[opportunity.id]:allocation.toFixed(2)}));
-  setNotice(`${amount(allocation,translate('investmentNotSet'))} of returned principal selected for simulated reinvestment. No estimated gains are included; review the allocation and confirm it separately.`);
+  setNotice(`${amount(allocation,translate('investmentNotSet'))} of the returned simulated payout selected for reinvestment. It may include previously settled simulated earnings; review and confirm the new allocation separately.`);
   document.getElementById('opportunities')?.scrollIntoView({behavior:'smooth',block:'start'});
  }
 
