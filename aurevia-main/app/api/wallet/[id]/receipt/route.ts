@@ -15,6 +15,9 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 	try{
 		const {id}=await params;
 		const user=await requireUser();
+		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
+		if(currentUser.accountMode==='DEMO')return NextResponse.json({error:'Deposits and withdrawals are available in REAL Mode only.'},{status:403});
 		ownerId=user.id;
 		const contentLength=Number(request.headers.get('content-length')||0);
 		if(contentLength>maxFundingEvidenceBytes+64*1024)return NextResponse.json({error:'Evidence must be 5 MB or smaller.'},{status:413});
@@ -23,7 +26,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		if(!(file instanceof File))return NextResponse.json({error:'Choose a receipt file.'},{status:400});
 		if(file.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
 		if(file.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
-		const requestRow=await db.fundingRequest.findFirst({where:{id,userId:user.id,accountMode:user.accountMode,type:FundingType.DEPOSIT,status:{in:reviewableStatuses}},select:{id:true,userId:true,accountMode:true,amount:true,currency:true,status:true,receiptKey:true}});
+		const requestRow=await db.fundingRequest.findFirst({where:{id,userId:user.id,accountMode:currentUser.accountMode,type:FundingType.DEPOSIT,status:{in:reviewableStatuses}},select:{id:true,userId:true,accountMode:true,amount:true,currency:true,status:true,receiptKey:true}});
 		if(!requestRow)return NextResponse.json({error:'Pending deposit request not found.'},{status:404});
 		const bytes=Buffer.from(await file.arrayBuffer());
 		const {contentType}=validateFundingEvidence(file,bytes);
@@ -56,7 +59,9 @@ export async function GET(_request:Request,{params}:{params:Promise<{id:string}>
 	try{
 		const {id}=await params;
 		const user=await requireUser();
-		const funding=await db.fundingRequest.findFirst({where:{id,userId:user.id,accountMode:user.accountMode},select:{userId:true,receiptKey:true}});
+		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
+		const funding=await db.fundingRequest.findFirst({where:{id,userId:user.id,accountMode:currentUser.accountMode},select:{userId:true,receiptKey:true}});
 		if(!funding)return NextResponse.json({error:'Funding request not found.'},{status:404});
 		if(!funding.receiptKey)return NextResponse.json({error:'No receipt is attached to this request.'},{status:404});
 		return NextResponse.json({url:await createPrivateSignedUrl('receipt',funding.userId,funding.receiptKey)},{headers:{'Cache-Control':'private, no-store'}});

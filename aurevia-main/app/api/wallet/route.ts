@@ -11,16 +11,13 @@ import {sendSupportEmail} from '@/lib/email';
 import {validateWithdrawal} from '@/lib/production-policy';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
-import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
-import {isBitcoinMainnetAddress,SIMULATED_BTC_ADDRESS_SETTING} from '@/lib/config/simulated-bitcoin-address';
-import {BTC_FUNDING_METHOD,normalizeBitcoinTransactionId,validateBitcoinDepositAmount} from '@/lib/bitcoin-funding';
 import {getRealWithdrawableBalance} from '@/lib/real-withdrawals';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
 	paymentMethodId:z.string().min(1).optional(),
 	amount:z.number().positive().max(100000000),
-	currency:z.union([z.enum(SUPPORTED_CURRENCIES),z.literal('BTC')]),
+	currency:z.literal('USD'),
 	transactionReference:z.string().trim().max(180).optional(),
 	referenceInfo:z.string().trim().max(500).optional(),
 	senderInfo:z.string().trim().max(300).optional(),
@@ -28,8 +25,6 @@ const schema=z.object({
 	beneficiaryInfo:z.string().trim().max(300).optional(),
 	network:z.string().trim().max(80).optional(),
 	note:z.string().trim().max(500).optional(),
-	simulatedBitcoinAddress:z.string().max(90).optional(),
-	simulatedBitcoinAddressAcknowledged:z.boolean().optional(),
 });
 
 const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING];
@@ -85,6 +80,7 @@ export async function POST(req:Request){
 		ownerId=user.id;
 		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
 		if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
+		if(currentUser.accountMode===AccountMode.DEMO)return NextResponse.json({error:'Deposits and withdrawals are available in REAL Mode only.'},{status:403});
 		let body:unknown;
 		let evidenceFile:File|null=null;
 		if(req.headers.get('content-type')?.includes('multipart/form-data')){
@@ -99,18 +95,12 @@ export async function POST(req:Request){
 			body=await req.json();
 		}
 		const parsed=schema.parse(body);
-		const btcDeposit=currentUser.accountMode===AccountMode.REAL&&parsed.type===FundingType.DEPOSIT&&parsed.currency==='BTC';
-		if(parsed.currency==='BTC'&&!btcDeposit)throw new Error('BTC_REAL_DEPOSIT_ONLY');
-		const bitcoinTransactionId=btcDeposit&&parsed.transactionReference?normalizeBitcoinTransactionId(parsed.transactionReference):null;
-		if(btcDeposit&&parsed.transactionReference&&!bitcoinTransactionId)throw new Error('BTC_TRANSACTION_ID_INVALID');
-		if(btcDeposit)validateBitcoinDepositAmount(parsed.amount);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
 		if(parsed.type===FundingType.DEPOSIT){
 			if(!currentUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 		}
-		if(parsed.paymentMethodId)return NextResponse.json({error:'External payment methods are disabled. Submit an internal simulated request without a payment method.'},{status:400});
-		if(btcDeposit&&!evidenceFile)throw new FundingEvidenceError('Attach a receipt screenshot for BTC deposit review.',400);
+		if(parsed.paymentMethodId)return NextResponse.json({error:'External payment methods are disabled. Submit an internal Aurevia ledger request without a payment method.'},{status:400});
 		if(parsed.type===FundingType.DEPOSIT&&evidenceFile){
 			if(evidenceFile.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
 			if(evidenceFile.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
@@ -124,10 +114,10 @@ export async function POST(req:Request){
 			if(!currentUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 			if(currentUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 		}
-		const currency=btcDeposit?'BTC':parsed.currency.toUpperCase();
-		const amount=currency==='USD'?roundUsdAmount(parsed.amount):new Prisma.Decimal(parsed.amount);
+		const currency='USD';
+		const amount=roundUsdAmount(parsed.amount);
 		if(amount.lte(0))throw new Error('INVALID_AMOUNT');
-		const transactionReference=btcDeposit?bitcoinTransactionId:parsed.transactionReference||null;
+		const transactionReference=parsed.transactionReference||null;
 
 		const result=await db.$transaction(async tx=>{
 			const activeUser=await tx.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
@@ -138,25 +128,11 @@ export async function POST(req:Request){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==currentUser.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null||duplicate.transactionReference!==transactionReference)throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
-			let simulatedBitcoinAddressAcknowledged=false;
-			if(parsed.type===FundingType.DEPOSIT){
-				const configured=await tx.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
-				const address=configured?.value.trim()||'';
-				if(!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
-				if(address&&!isBitcoinMainnetAddress(address))throw new Error('SIMULATED_BTC_ADDRESS_INVALID');
-				if(address){
-					if(parsed.simulatedBitcoinAddress!==address)throw new Error('SIMULATED_BTC_ADDRESS_CHANGED');
-					if(!parsed.simulatedBitcoinAddressAcknowledged)throw new Error('SIMULATED_BTC_ADDRESS_ACK_REQUIRED');
-					if(!receiptKey)throw new Error('SIMULATED_DEPOSIT_EVIDENCE_REQUIRED');
-					simulatedBitcoinAddressAcknowledged=true;
-				}
-			}
 			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}});
 			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
-			if(btcDeposit&&(fundingUser.kycStatus!=='APPROVED'||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
+			if(parsed.type==='DEPOSIT'&&(fundingUser.kycStatus!=='APPROVED'||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
-			if(currentUser.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
 			if(parsed.type==='WITHDRAWAL'){
 				const account=await ensureUserLedger(tx,user.id,currentUser.accountMode,currency);
 				const currentBalance=await balance(tx,account.id);
@@ -172,7 +148,7 @@ export async function POST(req:Request){
 			const request=await tx.fundingRequest.create({data:{
 				userId:user.id,
 				type:parsed.type,
-				method:btcDeposit?BTC_FUNDING_METHOD:`Internal simulated ${parsed.type.toLowerCase()}`,
+				method:`Internal REAL ${parsed.type.toLowerCase()} request`,
 				amount,
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
@@ -184,16 +160,15 @@ export async function POST(req:Request){
 				senderInfo:parsed.senderInfo||null,
 				destinationInfo:null,
 				beneficiaryInfo:null,
-				network:btcDeposit?'BITCOIN':null,
+				network:null,
 				note:parsed.note||null,
 				receiptKey:receiptKey||null,
 			}});
-			await tx.auditLog.create({data:{actorId:user.id,action:btcDeposit?'BTC_DEPOSIT_SUBMITTED':'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,transactionReference:btcDeposit?transactionReference:null,simulatedBitcoinAddressAcknowledged}}});
+			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey,transactionReference,externalEvidenceUserSubmitted:!!receiptKey||!!transactionReference}}});
 			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
-			const disclosure=btcDeposit?' The transaction has not been verified and no wallet credit has been made.':request.accountMode===AccountMode.REAL?' This is a simulated ledger request; no external money moves.':'';
-			await createNotification(tx,{userId:user.id,type:notificationType,title:btcDeposit?'BTC deposit request received':`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:btcDeposit?`Your BTC deposit screenshot is awaiting manual review${transactionReference?' with its transaction ID':''}. No blockchain confirmation is claimed and no wallet credit has been made.`:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:btcDeposit?'BTC deposit awaits manual verification':`New ${request.type.toLowerCase()} request`,message:btcDeposit?`A REAL BTC deposit request with a receipt screenshot${transactionReference?' and transaction ID':''} awaits manual review. No payment confirmation is assumed.`:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			await createNotification(tx,{userId:user.id,type:notificationType,title:`REAL ${request.type.toLowerCase()} request submitted`,message:'Your request is pending administrator review. This is an internal Aurevia ledger request; no external payment or transfer is initiated, and your balance will change only after approval.',dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
+			await notifyActiveAdmins(tx,{type:notificationType,title:`New REAL ${request.type.toLowerCase()} request`,message:`A REAL account ${request.type.toLowerCase()} request for ${request.amount.toFixed(2)} USD awaits administrator review. Any attached file or reference is user-submitted information only; no external payment is processed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
@@ -201,24 +176,16 @@ export async function POST(req:Request){
 		receiptKey=undefined;
 		let emailDelivery:'sent'|'not-configured'|'failed'='not-configured';
 		if(!result.replay){
-			const delivery=await sendSupportEmail(`New ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`,btcDeposit?`Transaction ID: ${transactionReference}`:''].filter(Boolean).join('\n'));
+			const delivery=await sendSupportEmail(`New internal ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`].join('\n'));
 			emailDelivery=delivery.sent?'sent':delivery.reason||'failed';
 		}
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!storedReceiptKey,emailDelivery},{status:result.replay?200:201});
 	}catch(error){
 		if(receiptKey&&ownerId)await deletePrivateObject('receipt',ownerId,receiptKey);
-		if(error instanceof ZodError)return NextResponse.json({error:'Check the funding details and try again.'},{status:400});
+		if(error instanceof ZodError)return NextResponse.json({error:'Funding requests must use USD. Check the request details and try again.'},{status:400});
 		if(error instanceof FundingEvidenceError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_ACK_REQUIRED')return NextResponse.json({error:'Copy the configured Bitcoin address or confirm that you already have it before submitting this deposit.'},{status:400});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'An administrator-configured Bitcoin reference address is not available. No crypto payment can be processed.'},{status:503});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_CHANGED')return NextResponse.json({error:'The simulated Bitcoin display address changed. Refresh the wallet and confirm the current address.'},{status:409});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_INVALID')return NextResponse.json({error:'The administrator-configured simulated Bitcoin display address is invalid. Contact support.'},{status:503});
-		if(error instanceof Error&&error.message==='SIMULATED_DEPOSIT_EVIDENCE_REQUIRED')return NextResponse.json({error:'Attach a receipt for administrator review before submitting this request.'},{status:400});
-		if(error instanceof Error&&error.message==='BTC_TRANSACTION_ID_INVALID')return NextResponse.json({error:'Enter a valid 64-character Bitcoin transaction ID or leave it blank.'},{status:400});
-		if(error instanceof Error&&error.message==='INVALID_BTC_AMOUNT')return NextResponse.json({error:'Enter a positive BTC amount with at most 8 decimal places.'},{status:400});
-		if(error instanceof Error&&error.message==='BTC_REAL_DEPOSIT_ONLY')return NextResponse.json({error:'BTC amounts are accepted only for REAL deposit requests.'},{status:400});
 		if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the request again.'},{status:409});
 		if(error instanceof Error&&error.message==='WALLET_ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
 		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});

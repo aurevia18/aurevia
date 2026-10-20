@@ -144,11 +144,12 @@ export default function PortfolioExperience(){
 				</article>
 			</section>
 			<nav className="portfolio-actions" aria-label="Portfolio actions">
-				<Link className="btn bg-gold text-black" href="/wallet?type=DEPOSIT"><ArrowDownLeft size={15}/>Deposit</Link>
+				{data.accountMode==='REAL'&&<Link className="btn bg-gold text-black" href="/wallet?type=DEPOSIT"><ArrowDownLeft size={15}/>Deposit</Link>}
 				<Link className="btn bg-white/5" href="/investments"><Briefcase size={15}/>Explore investments</Link>
 				<Link className="btn bg-white/5" href="/wallet/transactions"><FileClock size={15}/>Transaction history</Link>
-				<Link className="btn bg-white/5" href="/wallet?type=WITHDRAWAL"><ArrowUpRight size={15}/>Request withdrawal</Link>
+				{data.accountMode==='REAL'&&<Link className="btn bg-white/5" href="/wallet?type=WITHDRAWAL"><ArrowUpRight size={15}/>Request withdrawal</Link>}
 			</nav>
+			{data.accountMode==='DEMO'&&<div className="account-callout mt-4" role="status">Deposits and withdrawals are available in REAL Mode only.</div>}
 			<section className="portfolio-summary">
 				<div className="portfolio-total"><span>Recorded total value</span><strong>{money(data.totalValue)}</strong><small>Internal cash, open simulated positions and reserved investments</small></div>
 				<div className="portfolio-metric"><span>Available internal cash</span><b>{money(data.cashBalance)}</b></div>

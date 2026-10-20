@@ -19,9 +19,9 @@ const baseReceipt:ReceiptData={
 describe('transaction receipt',()=>{
 	it('does not label an approved REAL withdrawal as completed or successful',()=>{
 		const markup=renderToStaticMarkup(<ReceiptGenerator receipt={baseReceipt}/>);
-		expect(markup).toContain('Approved · payout not configured');
+		expect(markup).toContain('Approved · internal debit pending');
 		expect(markup).not.toContain('>Success<');
-		expect(markup).toContain('No external payout configured');
+		expect(markup).toContain('Internal Aurevia ledger');
 	});
 
 	it('shows completion only when the persisted status is completed',()=>{
@@ -30,10 +30,11 @@ describe('transaction receipt',()=>{
 	});
 
 	it('renders as a constrained receipt card with transaction details',()=>{
-		const markup=renderToStaticMarkup(<ReceiptGenerator receipt={{...baseReceipt,status:'PENDING_REVIEW',type:'DEPOSIT',manualBitcoinDeposit:true,externalReference:'a'.repeat(64)}}/>);
+		const markup=renderToStaticMarkup(<ReceiptGenerator receipt={{...baseReceipt,status:'PENDING_REVIEW',type:'DEPOSIT',simulated:true,externalReference:'user-reference'}}/>);
 		expect(markup).toContain('max-w-2xl');
 		expect(markup).toContain('Transaction details');
 		expect(markup).toContain('Pending review');
-		expect(markup).toContain('Manual Bitcoin review · no automatic confirmation');
+		expect(markup).toContain('INTERNAL PAPER LEDGER RECORD');
+		expect(markup).toContain('user-reference');
 	});
 });

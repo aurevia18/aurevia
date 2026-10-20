@@ -1,11 +1,12 @@
 import {describe,expect,it} from 'vitest';
 import {AccountMode,KycStatus} from '@prisma/client';
-import {DEMO_STARTING_BALANCE} from '../lib/ledger';
+import {DEMO_STARTING_BALANCE,REAL_STARTING_BALANCE} from '../lib/ledger';
 import {assertKycSubmissionAllowed,getAccountTier,validateDepositApproval,validateTierThreeApproval,validateTierUpgradeApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
 
 describe('production account policy',()=>{
-  it('starts paper accounts with exactly 100,000 simulated USD',()=>{
-    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('100000.00');
+  it('starts DEMO accounts with 5,000 virtual USD and REAL accounts with zero USD',()=>{
+    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('5000.00');
+    expect(REAL_STARTING_BALANCE.toFixed(2)).toBe('0.00');
   });
 
   it('keeps demo and real account states isolated',()=>{

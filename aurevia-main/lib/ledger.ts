@@ -1,5 +1,5 @@
 import {AccountMode,FundingStatus,FundingType,Prisma,PrismaClient,EntryType} from '@prisma/client';
-import {PAPER_OPENING_BALANCE} from './config/simulation';
+import {DEMO_OPENING_BALANCE,REAL_OPENING_BALANCE} from './config/simulation';
 const D=Prisma.Decimal;type Tx=PrismaClient|Prisma.TransactionClient;
 export function roundUsdAmount(amount:Prisma.Decimal|string|number){return new D(amount).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);}
 export async function balance(tx:Tx,accountId:string){
@@ -33,18 +33,20 @@ export async function postDoubleEntry(tx:Tx,args:{reference:string;description:s
 }
 export async function ensureUserLedger(tx:Tx,userId:string,accountMode:AccountMode=AccountMode.DEMO,currency='USD'){const normalizedCurrency=currency.toUpperCase();const code=`USER:${userId}:${accountMode}:${normalizedCurrency}`;return tx.ledgerAccount.upsert({where:{code},update:{},create:{userId,accountMode,code,name:`${accountMode} account ${userId} ${normalizedCurrency}`,currency:normalizedCurrency}})}
 export async function ensureSystemAccount(tx:Tx,code:string,name:string,currency='USD',accountMode:AccountMode=AccountMode.DEMO){return tx.ledgerAccount.upsert({where:{code},update:{},create:{code,name,currency:currency.toUpperCase(),accountMode}})}
-export const PAPER_STARTING_BALANCE=new D(PAPER_OPENING_BALANCE);
+export const PAPER_STARTING_BALANCE=new D(DEMO_OPENING_BALANCE);
 export const DEMO_STARTING_BALANCE=PAPER_STARTING_BALANCE;
+export const REAL_STARTING_BALANCE=new D(REAL_OPENING_BALANCE);
 export async function initializePaperAccount(tx:Tx,userId:string,accountMode:AccountMode){
  const account=await ensureUserLedger(tx,userId,accountMode,'USD');
+ if(accountMode===AccountMode.REAL)return false;
  const reference=`${accountMode}:STARTING_BALANCE:${userId}`;
  const existing=await tx.ledgerTransaction.findUnique({where:{reference},select:{id:true}});
  if(existing)return false;
  if(account.startingBalance.gt(0))return false;
- await tx.ledgerAccount.update({where:{id:account.id},data:{startingBalance:PAPER_STARTING_BALANCE}});
+ await tx.ledgerAccount.update({where:{id:account.id},data:{startingBalance:DEMO_STARTING_BALANCE}});
  const capital=await ensureSystemAccount(tx,`SYSTEM:${accountMode}:INITIAL_CAPITAL`,`${accountMode} paper-account capital`,'USD',accountMode);
- await postDoubleEntry(tx,{reference,description:`Initial ${accountMode} paper-account allocation`,debitAccountId:capital.id,creditAccountId:account.id,amount:PAPER_STARTING_BALANCE});
- await tx.auditLog.create({data:{actorId:userId,action:`${accountMode}_PAPER_ACCOUNT_INITIALIZED`,entity:'LEDGER_ACCOUNT',entityId:account.id,metadata:{accountMode,currency:'USD',amount:PAPER_STARTING_BALANCE.toFixed(2),simulated:true,paperAccount:true}}});
+ await postDoubleEntry(tx,{reference,description:'Initial DEMO virtual account allocation',debitAccountId:capital.id,creditAccountId:account.id,amount:DEMO_STARTING_BALANCE});
+ await tx.auditLog.create({data:{actorId:userId,action:'DEMO_PAPER_ACCOUNT_INITIALIZED',entity:'LEDGER_ACCOUNT',entityId:account.id,metadata:{accountMode,currency:'USD',amount:DEMO_STARTING_BALANCE.toFixed(2),simulated:true,paperAccount:true}}});
  return true;
 }
 export async function initializeDemoAccount(tx:Tx,userId:string){return initializePaperAccount(tx,userId,AccountMode.DEMO);}

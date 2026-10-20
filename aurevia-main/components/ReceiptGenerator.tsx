@@ -13,7 +13,6 @@ export type ReceiptData={
 	type?:'DEPOSIT'|'WITHDRAWAL'|'CREDIT'|'DEBIT';
 	accountMode?:'DEMO'|'REAL';
 	simulated?:boolean;
-	manualBitcoinDeposit?:boolean;
 	isWithdrawal?:boolean;
 	createdAt:string;
 	reviewedAt?:string|null;
@@ -63,11 +62,10 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 
 	const kind=currentReceipt.type||'DEPOSIT';
 	const isWithdrawal=currentReceipt.isWithdrawal===true||kind==='WITHDRAWAL';
-	const isBitcoinDeposit=currentReceipt.manualBitcoinDeposit===true;
 	const isSuccessful=currentReceipt.status==='COMPLETED'||(currentReceipt.status==='APPROVED'&&!isWithdrawal);
 	const isFailed=currentReceipt.status==='REJECTED'||currentReceipt.status==='FAILED'||currentReceipt.status==='CANCELLED';
 	const statusLabel=currentReceipt.status==='APPROVED'&&isWithdrawal
-		?currentReceipt.accountMode==='REAL'?'Approved · payout not configured':'Approved · awaiting settlement'
+		?currentReceipt.accountMode==='REAL'?'Approved · internal debit pending':'Approved · awaiting ledger settlement'
 		:currentReceipt.status==='APPROVED'?'Approved'
 		:currentReceipt.status==='COMPLETED'?'Completed'
 		:currentReceipt.status==='REJECTED'?'Rejected'
@@ -77,14 +75,14 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		:currentReceipt.status==='PROCESSING'?'Processing'
 		:'Pending';
 	const receiptTitle=kind==='DEPOSIT'?'Deposit':kind==='WITHDRAWAL'?'Withdrawal':kind==='CREDIT'?'Account credit':'Account debit';
-	const recipientName=currentReceipt.recipientName||currentReceipt.destinationName||'Aurevia-Xchange Inc.';
-	const recipientNumber=currentReceipt.recipientNumber||currentReceipt.destinationNumber||'Not provided';
-	const sourceName=currentReceipt.sourceName||'My Wallet';
+	const recipientName=currentReceipt.recipientName||currentReceipt.destinationName||'Aurevia internal ledger';
+	const recipientNumber=currentReceipt.recipientNumber||currentReceipt.destinationNumber||'Internal account entry';
+	const sourceName=currentReceipt.sourceName||'Aurevia account';
 	const sourceNumber=currentReceipt.sourceNumber||currentReceipt.accountReference||'Not provided';
-	const destinationName=currentReceipt.destinationName||'Aurevia-Xchange Inc.';
+	const destinationName=currentReceipt.destinationName||'Aurevia internal ledger';
 	const destinationNumber=currentReceipt.destinationNumber||currentReceipt.recipientNumber||'Not provided';
 	const purpose=currentReceipt.purpose||`${kind.charAt(0)}${kind.slice(1).toLowerCase()} · ${currentReceipt.accountMode||'Simulated'} account`;
-	const gateway=currentReceipt.gateway||(isBitcoinDeposit?'Manual Bitcoin review · no automatic confirmation':isWithdrawal&&currentReceipt.accountMode==='REAL'?'No external payout configured':currentReceipt.accountMode==='REAL'?'Aurevia internal ledger':'Aurevia simulated account');
+	const gateway=currentReceipt.gateway||(currentReceipt.accountMode==='REAL'?'Internal Aurevia ledger':'DEMO paper ledger');
 	const fileName=`aurevia-${kind.toLowerCase()}-${currentReceipt.status.toLowerCase()}-${currentReceipt.id}`;
 
 	async function exportReceipt(format:'png'|'pdf'){
@@ -117,7 +115,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	return <div className="mx-auto grid w-full min-w-0 max-w-2xl gap-3">
 		<article ref={receiptRef} className="receipt-container max-h-[70vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5 sm:max-h-[min(78vh,760px)]" aria-label={`${receiptTitle} ${currentReceipt.status.toLowerCase().replaceAll('_',' ')} receipt`}>
 			<header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-100 bg-white/95 px-4 py-3 backdrop-blur sm:px-6">
-				<h2 className="text-base font-semibold tracking-tight sm:text-lg">{isBitcoinDeposit?'BTC deposit review receipt':'Funding request receipt'}</h2>
+				<h2 className="text-base font-semibold tracking-tight sm:text-lg">Funding request receipt</h2>
 				<button type="button" className="grid size-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close receipt" onClick={()=>setVisible(false)}><X size={19}/></button>
 			</header>
 			<div className="px-4 pb-4 pt-4 sm:px-6 sm:pb-5">
@@ -135,14 +133,14 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 				</div>
 
 				<section className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4" aria-label="Transaction details">
-					<h3 className="text-sm font-semibold text-slate-900">Transfer details</h3>
+					<h3 className="text-sm font-semibold text-slate-900">Ledger entry details</h3>
 					<dl className="mt-3 divide-y divide-slate-200/80">
 						<ReceiptRow label="Source" value={`${sourceName} · ${sourceNumber}`}/>
 						<div className="flex min-w-0 items-start justify-between gap-4 py-3 text-sm"><dt className="shrink-0 text-slate-500">Destination</dt><dd className="flex min-w-0 items-center gap-2 text-right font-medium text-slate-800"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-800" aria-hidden="true">A</span><span className="min-w-0"><span className="block break-words">{destinationName}</span><span className="block break-all text-xs font-normal text-slate-500">{destinationNumber}</span></span></dd></div>
 						<ReceiptRow label="Purpose" value={purpose}/>
-						<ReceiptRow label="Transfer method" value={currentReceipt.method}/>
-						<ReceiptRow label="Transaction fee" value={currentReceipt.fee===null||currentReceipt.fee===undefined?'Not recorded':amountLabel(currentReceipt.fee,currentReceipt.currency,false)}/>
-						<ReceiptRow label="Gateway" value={gateway}/>
+						<ReceiptRow label="Request method" value={currentReceipt.method}/>
+						{currentReceipt.fee!==null&&currentReceipt.fee!==undefined&&<ReceiptRow label="Recorded fee" value={amountLabel(currentReceipt.fee,currentReceipt.currency,false)}/>}
+						<ReceiptRow label="Ledger" value={gateway}/>
 						{currentReceipt.creditedAmount!==undefined&&currentReceipt.creditedAmount!==null&&<ReceiptRow label="Aurevia ledger credit" value={amountLabel(currentReceipt.creditedAmount,currentReceipt.creditedCurrency||currentReceipt.currency,false)}/>}
 					</dl>
 					<div className="border-t border-slate-200/80">
@@ -164,8 +162,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 						</dl>
 					</div>
 				</section>
-				{isBitcoinDeposit&&<p className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900"><strong>MANUAL BTC REVIEW RECORD</strong> · Screenshot and transaction ID are submitted evidence, not automatic blockchain confirmation. Any USD amount shown is a separate admin-entered Aurevia ledger credit.</p>}
-				{currentReceipt.simulated&&<p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900"><strong>SIMULATED INTERNAL LEDGER RECORD</strong> · No external payment, bank transfer, held asset, or payout occurred.</p>}
+				{currentReceipt.simulated&&<p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900"><strong>INTERNAL PAPER LEDGER RECORD</strong> · This receipt documents an Aurevia account entry only. No external payment, asset custody, or transfer was processed.</p>}
 				<footer className="mt-3 border-t border-slate-100 pt-3 text-center text-xs leading-5 text-slate-500">Aurevia Invest · internal funding record</footer>
 			</div>
 		</article>

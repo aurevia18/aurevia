@@ -1,11 +1,9 @@
 'use client';
 
 import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import {useSession} from 'next-auth/react';
-import {ArrowDownLeft,ArrowUpRight,Copy,Eye,EyeOff,RefreshCw,WalletCards} from 'lucide-react';
-import QRCode from 'qrcode';
+import {ArrowDownLeft,ArrowUpRight,Eye,EyeOff,RefreshCw,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import ReceiptGenerator,{type ReceiptData} from '@/components/ReceiptGenerator';
 import {useLocale} from '@/lib/i18n-context';
@@ -21,7 +19,7 @@ type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'SIMULATED'|'
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
 
 const money=(amount:number,currency='USD')=>currency==='USD'?formatUsd(amount):`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
-const statuses:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved · reserved',COMPLETED:'Completed',FAILED:'Failed · reservation released',REVERSED:'Reversed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
+const statuses:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending administrator review',PROCESSING:'Processing',APPROVED:'Approved · internal debit pending',COMPLETED:'Completed in ledger',FAILED:'Failed · reservation released',REVERSED:'Reversed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
 const receiptStatus=(status:string):ReceiptData['status']=>{
 	switch(status){
 		case 'PENDING':case 'PENDING_REVIEW':case 'PROCESSING':case 'APPROVED':case 'COMPLETED':case 'REJECTED':case 'FAILED':case 'CANCELLED':return status;
@@ -35,14 +33,7 @@ const formatFundingMethodLabel=(method:string)=>{
 	if(/^Internal simulated\b/i.test(value))return value;
 	return value.replace(/^Admin configured\s+/i,'Administrator ').replace(/\s+REAL deposit$/i,' Real Account deposit').replace(/\s+simulated\s+/i,' ');
 };
-const fundingUnavailableMessage=(status:PaymentMethodsResponse['fundingStatus'])=>{
-	if(status==='SIMULATED')return 'Deposit requests are reviewed by an administrator. Approval credits the selected paper ledger; no payment is processed.';
-	if(status==='MANUAL_REVIEW')return 'The configured reference flow is available for a paper-ledger request. Any approved credit is simulated; no payment is processed.';
-	if(status==='NOT_CONFIGURED')return 'No administrator-configured reference address is available. Ask an administrator to configure one or fund the paper account directly.';
-	if(status==='DISABLED')return 'Funding is temporarily unavailable because the configured workflow is disabled. No funds were changed.';
-	if(status==='ERROR')return 'Funding is temporarily unavailable because provider health could not be confirmed. No funds were changed.';
-	return 'Funding is temporarily unavailable until a verified payment workflow is available. No funds were changed.';
-};
+const fundingUnavailableMessage=(status:PaymentMethodsResponse['fundingStatus'])=>status==='DISABLED'?'Internal ledger requests are temporarily disabled for this account. No balance was changed.':'Internal ledger requests are temporarily unavailable. No balance was changed.';
 const validateFundingAmount=(amountText:string,mode:'DEPOSIT'|'WITHDRAWAL',balance:number|null,minimum:number|undefined,maximum:number|undefined)=>{
 	const numeric=Number(amountText);
 	if(!amountText.trim()||!Number.isFinite(numeric)||numeric<=0)return 'Enter a positive amount.';
@@ -75,8 +66,6 @@ export default function WalletExperience(){
 	const [realFundingAvailable,setRealFundingAvailable]=useState(false);
 	const [realWithdrawalAvailable,setRealWithdrawalAvailable]=useState(false);
 	const [manualDepositReviewAvailable,setManualDepositReviewAvailable]=useState(false);
-	const [simulatedBitcoinAddress,setSimulatedBitcoinAddress]=useState('');
-	const [bitcoinAddressAcknowledged,setBitcoinAddressAcknowledged]=useState(false);
 	const [profile,setProfile]=useState<KycData|null>(null);
 	const [methodLoadError,setMethodLoadError]=useState('');
 	const [profileLoadError,setProfileLoadError]=useState('');
@@ -85,11 +74,6 @@ export default function WalletExperience(){
 	const [currency,setCurrency]=useState('USD');
 	const [amount,setAmount]=useState('');
 	const [transactionReference,setTransactionReference]=useState('');
-	const [referenceInfo,setReferenceInfo]=useState('');
-	const [senderInfo,setSenderInfo]=useState('');
-	const [destinationInfo,setDestinationInfo]=useState('');
-	const [beneficiaryInfo,setBeneficiaryInfo]=useState('');
-	const [network,setNetwork]=useState('');
 	const [note,setNote]=useState('');
 	const [confirming,setConfirming]=useState(false);
 	const [message,setMessage]=useState('');
@@ -98,10 +82,6 @@ export default function WalletExperience(){
 	const [hasWalletData,setHasWalletData]=useState(false);
 	const [balanceVisible,setBalanceVisible]=useState(true);
 	const [submitting,setSubmitting]=useState(false);
-	const [copied,setCopied]=useState(false);
-	const [bitcoinQr,setBitcoinQr]=useState('');
-	const [bitcoinQrError,setBitcoinQrError]=useState('');
-	const copiedTimer=useRef<number|null>(null);
 	const currencyPreferenceInitialized=useRef(false);
 	const latestRequest=useRef(0);
 	const [idempotencyKey,setIdempotencyKey]=useState('');
@@ -116,37 +96,20 @@ export default function WalletExperience(){
 
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
-	const manualRealRequest=data.accountMode==='REAL'||data.accountMode==='DEMO';
+	const manualRealRequest=data.accountMode==='REAL';
 	const manualRealDeposit=type==='DEPOSIT'&&manualRealRequest;
 	const manualRealWithdrawal=type==='WITHDRAWAL'&&manualRealRequest;
 	const manualRealFunding=manualRealDeposit||manualRealWithdrawal;
-	const supportedCurrencies:readonly string[]=SUPPORTED_CURRENCIES;
 	const currentBalanceRecord=data.balances.find(item=>item.currency===currency);
 	const currentBalance=currentBalanceRecord?Number(currentBalanceRecord.balance):null;
 	const pendingWithdrawal=useMemo(()=>data.transactions.filter(item=>item.type==='WITHDRAWAL'&&item.currency===currency&&reserves.includes(item.status)).reduce((sum,item)=>sum+Number(item.amount),0),[data.transactions,currency]);
 	const ledgerAvailableBalance=currentBalance===null?null:currentBalance-pendingWithdrawal;
 	const availableBalance=data.accountMode==='REAL'&&currency==='USD'
-		?(data.withdrawableBalance===undefined||data.withdrawableBalance===null?0:Number(data.withdrawableBalance))
+		?(data.withdrawableBalance===undefined||data.withdrawableBalance===null?null:Number(data.withdrawableBalance))
 		:ledgerAvailableBalance;
 	const currentDisplayRate=currencyRate?.rate!==null&&currencyRate?.rate!==undefined&&Number.isFinite(Number(currencyRate.rate))&&Number(currencyRate.rate)>0?Number(currencyRate.rate):null;
 	const realKycApproved=profile?.kycStatus==='APPROVED'&&profile.documents>0&&profile.verificationProfileSubmitted;
 	const realWithdrawalBlocked=data.accountMode==='REAL'&&!!profile&&(!profile.withdrawalEnabled||profile.accountRestricted);
-	const realBitcoinDeposit=data.accountMode==='REAL'&&type==='DEPOSIT';
-	const bitcoinDisplayAddress=type==='DEPOSIT'?simulatedBitcoinAddress:'';
-	const depositEvidenceRequired=type==='DEPOSIT'&&(realBitcoinDeposit||!!bitcoinDisplayAddress);
-	const bitcoinDepositReady=!depositEvidenceRequired||!!proofFile;
-
-	useEffect(()=>{
-		if(!bitcoinDisplayAddress){setBitcoinQr('');setBitcoinQrError('');return}
-		let active=true;
-		setBitcoinQr('');
-		setBitcoinQrError('');
-		void QRCode.toDataURL(bitcoinDisplayAddress,{errorCorrectionLevel:'M',margin:2,width:220,color:{dark:'#0B0F19',light:'#FFFFFF'}})
-			.then(value=>{if(active)setBitcoinQr(value)})
-			.catch(()=>{if(active)setBitcoinQrError('The address QR code could not be generated. Use the copy button to copy the exact configured address.')});
-		return()=>{active=false};
-	},[bitcoinDisplayAddress]);
-
 	const load=useCallback(async(showLoading=false)=>{
 		const requestId=++latestRequest.current;
 		if(showLoading)setLoading(true);
@@ -169,7 +132,6 @@ export default function WalletExperience(){
 		}
 		if(methodsRequest.status==='fulfilled'&&methodsRequest.value.response.ok&&isPaymentMethodsResponse(methodsRequest.value.result)){
 			setMethods(methodsRequest.value.result.methods);
-			setSimulatedBitcoinAddress(methodsRequest.value.result.simulatedBitcoinAddress||'');
 			setFundingStatus(methodsRequest.value.result.fundingStatus);
 			setRealFundingAvailable(methodsRequest.value.result.realFundingAvailable);
 			setRealWithdrawalAvailable(methodsRequest.value.result.realWithdrawalAvailable);
@@ -177,7 +139,7 @@ export default function WalletExperience(){
 			setMethodLoadError('');
 		}else{
 			const result=methodsRequest.status==='fulfilled'?methodsRequest.value.result as {error?:string}:null;
-			setMethods([]);setSimulatedBitcoinAddress('');setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);
+			setMethods([]);setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);
 			setMethodLoadError(result?.error||'Funding options are temporarily unavailable. No funds were changed.');
 		}
 		if(profileRequest.status==='fulfilled'&&profileRequest.value.response.ok&&profileRequest.value.result&&typeof profileRequest.value.result==='object'){
@@ -218,7 +180,7 @@ export default function WalletExperience(){
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
 		setData({accountMode:activeMode||'DEMO',balance:0,balances:[],transactions:[],adminLedgerReceipts:[]});
-		setMethods([]);setMethodId('');setSimulatedBitcoinAddress('');setBitcoinAddressAcknowledged(false);setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);setSubmittedReceipt(null);setAmount('');setTransactionReference('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);setMessage('');setReceiptFiles({});
+		setMethods([]);setMethodId('');setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);setSubmittedReceipt(null);setAmount('');setTransactionReference('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);setMessage('');setReceiptFiles({});
 		void load(true);
 	},[sessionStatus,activeMode,load]);
 	useEffect(()=>{
@@ -235,19 +197,12 @@ export default function WalletExperience(){
 	useEffect(()=>{
 		if(methodId!=='SIMULATED_REAL'&&!availableMethods.some(method=>method.id===methodId))setMethodId(availableMethods[0]?.id||'');
 	},[availableMethods,methodId]);
-	useEffect(()=>{if(realBitcoinDeposit){if(currency!=='BTC')setCurrency('BTC');return}if(supportedCurrencies.length&&!supportedCurrencies.includes(currency))setCurrency(supportedCurrencies[0])},[supportedCurrencies,currency,realBitcoinDeposit]);
-	useEffect(()=>{if(manualRealWithdrawal&&currency!=='USD')setCurrency('USD')},[manualRealWithdrawal,currency]);
-	useEffect(()=>{setBitcoinAddressAcknowledged(false)},[simulatedBitcoinAddress]);
-	useEffect(()=>()=>{if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current)},[]);
+	useEffect(()=>{if(currency!=='USD')setCurrency('USD')},[currency]);
 
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selectedMethod&&!manualRealFunding)return;
-		if(depositEvidenceRequired&&!proofFile){setError('Attach a receipt for administrator review.');return;}
-		if(realBitcoinDeposit&&transactionReference.trim()&&!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim())){setError('Enter a valid transaction ID or leave it blank.');return;}
-		if(type==='DEPOSIT'&&bitcoinDisplayAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
-		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
-		const minimumAmount=realBitcoinDeposit?0.00000001:selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
+		const minimumAmount=selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
 		const minAmount=type==='DEPOSIT'?minimumAmount:undefined;
 		const maxAmount=type==='WITHDRAWAL'?(selectedMethod&&selectedMethod.maximumAmount!==null&&selectedMethod.maximumAmount!==undefined?Number(selectedMethod.maximumAmount):undefined):undefined;
 		const validationMessage=validateFundingAmount(amount,type,availableBalance,minAmount,maxAmount);
@@ -257,12 +212,8 @@ export default function WalletExperience(){
 
 	async function confirmSubmit(){
 		if((!selectedMethod&&!manualRealFunding)||submitting)return;
-		if(depositEvidenceRequired&&!proofFile){setError('Attach a receipt for administrator review.');return;}
-		if(realBitcoinDeposit&&transactionReference.trim()&&!/^[a-fA-F0-9]{64}$/.test(transactionReference.trim())){setError('Enter a valid transaction ID or leave it blank.');return;}
-		if(type==='DEPOSIT'&&bitcoinDisplayAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
-		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
-		const payload={type,...(selectedMethod&&!realBitcoinDeposit?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency:realBitcoinDeposit?'BTC':currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined,...(type==='DEPOSIT'&&bitcoinDisplayAddress?{simulatedBitcoinAddress:bitcoinDisplayAddress,simulatedBitcoinAddressAcknowledged:bitcoinAddressAcknowledged}:{})};
+		const payload={type,amount:Number(amount),currency:'USD',transactionReference:transactionReference||undefined,note:note||undefined};
 		const fingerprint=JSON.stringify(payload);
 		const key=idempotencyKey&&keyFingerprint===fingerprint?idempotencyKey:window.crypto.randomUUID();setIdempotencyKey(key);setKeyFingerprint(fingerprint);
 		try{
@@ -282,20 +233,10 @@ export default function WalletExperience(){
 			if(!response.ok)throw new Error(result.error||'Unable to submit this request.');
 			setSubmittedReceipt(result as FundingRecord);
 			setMessage(response.status===200?`Request ${result.id} already exists with status ${String(result.status).replaceAll('_',' ')}. No new request was created.`:`Request ${result.id} submitted for administrator review. The ledger has not been posted.`);
-			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setBitcoinAddressAcknowledged(false);setConfirming(false);
+			setAmount('');setTransactionReference('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);
 			await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit this request.');}
 		finally{setSubmitting(false);}
-	}
-
-	async function copyDestination(){
-		if(!simulatedBitcoinAddress)return;
-		try{
-			await navigator.clipboard.writeText(simulatedBitcoinAddress);
-			setCopied(true);setBitcoinAddressAcknowledged(true);
-			if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current);
-			copiedTimer.current=window.setTimeout(()=>{setCopied(false);copiedTimer.current=null},1500);
-		}catch{setError('Clipboard access is unavailable in this browser.')}
 	}
 
 	async function uploadReceipt(request:FundingRecord){
@@ -320,23 +261,22 @@ export default function WalletExperience(){
 	}
 
 	return <><Nav/><main className="account-page">
-		<header className="account-heading"><div><span className="account-kicker">{data.accountMode} ACCOUNT · {translate('walletHeader')}</span><h1>{translate('walletTitle')}</h1><p>{data.accountMode==='DEMO'?'DEMO uses a separate virtual wallet and simulated transactions.':'REAL is Aurevia’s internal wallet ledger; deposits require manual review and do not represent Alpaca Paper funds.'}</p></div><span className={`status-pill ${data.accountMode==='DEMO'?'mode-demo':'mode-real'}`}>{data.accountMode==='DEMO'?'DEMO · VIRTUAL':'REAL · INTERNAL WALLET'}</span></header>
-		{data.accountMode==='REAL'&&type==='DEPOSIT'&&(selectedMethod||realBitcoinDeposit)&&!realKycApproved&&<div className="account-callout account-mode-notice"><span>{translate('verificationRequired')}</span><Link className="text-link" href="/kyc">{translate('openVerification')}</Link></div>}
-		{type==='DEPOSIT'&&!loading&&!methodLoadError&&!bitcoinDisplayAddress&&<div className="account-callout account-mode-notice" role="status"><span>No administrator-configured Bitcoin reference address is available for this {data.accountMode} funding request. An administrator can configure a reference address or fund the paper account directly. Aurevia does not receive, custody, or verify cryptocurrency; an approved request creates a paper-ledger credit only.</span></div>}
+		<header className="account-heading"><div><span className="account-kicker">{data.accountMode} ACCOUNT · {translate('walletHeader')}</span><h1>{translate('walletTitle')}</h1><p>{data.accountMode==='DEMO'?'DEMO uses a separate virtual wallet and simulated transactions.':'REAL account activity is recorded only in Aurevia’s internal ledger; no external payment or transfer is processed.'}</p></div><span className={`status-pill ${data.accountMode==='DEMO'?'mode-demo':'mode-real'}`}>{data.accountMode==='DEMO'?'DEMO · VIRTUAL':'REAL · INTERNAL LEDGER'}</span></header>
+		{data.accountMode==='REAL'&&type==='DEPOSIT'&&!realKycApproved&&<div className="account-callout account-mode-notice"><span>{translate('verificationRequired')}</span><Link className="text-link" href="/kyc">{translate('openVerification')}</Link></div>}
 		{realWithdrawalBlocked&&<div className="account-callout account-mode-notice"><span>{profile?.accountRestricted?translate('accountRestrictedNotice'):translate('withdrawalDisabled')}{profile?.restrictionReason?` ${profile.restrictionReason}`:''}</span><Link className="text-link" href="/support">{translate('contactSupportAction')}</Link></div>}
 		{type==='DEPOSIT'&&profile?.depositEnabled===false&&<div className="account-callout account-mode-notice" role="status"><span>Deposits are disabled for your account. Contact an administrator for assistance.</span></div>}
 		{type==='WITHDRAWAL'&&profile&&!profile.withdrawalEnabled&&!realWithdrawalBlocked&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawals are disabled for your account by an administrator.</span></div>}
 		{type==='WITHDRAWAL'&&profile?.canWithdraw===false&&!realWithdrawalBlocked&&profile.withdrawalEnabled&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawals are available only after the first completed investment trade.</span></div>}
-		{type==='WITHDRAWAL'&&data.accountMode==='REAL'&&<div className="account-callout account-mode-notice" role="status"><span>REAL withdrawals can use only the remaining balance backed by manually verified BTC credits. No external payout provider is configured, so administrator approval will leave a request reserved and incomplete.</span></div>}
+		{type==='WITHDRAWAL'&&data.accountMode==='REAL'&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawal requests are checked against your REAL available ledger balance, including pending reservations. Administrator approval debits this internal balance once; no external transfer is initiated.</span></div>}
 		{data.accountMode==='REAL'&&((type==='DEPOSIT'&&!realFundingAvailable&&!manualDepositReviewAvailable)||(type==='WITHDRAWAL'&&!realWithdrawalAvailable))&&<div className="account-callout account-mode-notice" role="status"><span>{fundingUnavailableMessage(fundingStatus)}</span></div>}
 		{data.accountMode==='REAL'&&profileLoadError&&<div className="account-callout account-mode-notice" role="status"><span>{profileLoadError} REAL funding requests remain disabled until this status can be verified.</span></div>}
 		<section className="wallet-balance-panel">
 			<div className="wallet-balance-heading"><div className="account-kicker">{translate('availableBalances',{mode:data.accountMode.toLowerCase()})}</div><button type="button" className="wallet-balance-toggle" aria-label={balanceVisible?'Hide balances':'Show balances'} aria-pressed={!balanceVisible} onClick={()=>setBalanceVisible(value=>!value)}>{balanceVisible?<EyeOff size={16}/>:<Eye size={16}/>}<span>{balanceVisible?'Hide':'Show'}</span></button></div>
 			<div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-				<div className="text-xs uppercase tracking-[0.18em] text-emerald-200/80">{data.accountMode==='DEMO'?'Internal virtual DEMO balance':'Aurevia REAL paper-account ledger balance'}</div>
+				<div className="text-xs uppercase tracking-[0.18em] text-emerald-200/80">{data.accountMode==='DEMO'?'Internal virtual DEMO balance':'Aurevia REAL available ledger balance'}</div>
 				<div className="wallet-balance-value mt-2 text-3xl font-semibold text-white">{loading?translate('loading'):!hasWalletData||data.balance===null?'Unavailable':balanceVisible?money(Number(data.balance),'USD'):'•••••• USD'}</div>
 				<div className="mt-1 text-sm text-slate-300">USD account balance and pending review totals</div>
-				{data.accountMode==='REAL'&&				<div className="mt-3 border-t border-white/10 pt-3 text-sm text-slate-300">Eligible withdrawal balance • verified BTC credits only: <b className="text-white">{loading||!hasWalletData||data.withdrawableBalance===null||data.withdrawableBalance===undefined?'Unavailable':balanceVisible?money(Number(data.withdrawableBalance),'USD'):'•••••• USD'}</b><p className="mt-1 text-xs muted">No external payout provider is configured. An approved request remains reserved and is not completed or paid.</p></div>}
+				{data.accountMode==='REAL'&&<div className="mt-3 border-t border-white/10 pt-3 text-sm text-slate-300">Available for withdrawal after pending reservations: <b className="text-white">{loading||!hasWalletData||data.withdrawableBalance===null||data.withdrawableBalance===undefined?'Unavailable':balanceVisible?money(Number(data.withdrawableBalance),'USD'):'•••••• USD'}</b><p className="mt-1 text-xs muted">Approval records an internal ledger debit only; it does not send money externally.</p></div>}
 			</div>
 			<p className="wallet-demo-note">{hasWalletData?translate('walletDemoNote'):'Balance could not be retrieved. No balance is assumed.'}</p>
 			<div className="wallet-currency-list">{data.balances.filter(item=>item.currency!=='BTC').map(item=><span key={item.currency}>{balanceVisible?money(Number(item.balance),item.currency):`${item.currency} ••••••`}</span>)}</div>
@@ -351,64 +291,37 @@ export default function WalletExperience(){
 		{error&&<p className="mt-3 text-sm text-loss" role="alert">{error}</p>}
 		{message&&<p className="mt-3 text-sm text-profit" role="status">{message}</p>}
 		<div className="account-metrics mt-3"><div className="account-metric"><span>{translate('pendingReview')}</span><b>{hasWalletData?data.transactions.filter(item=>reserves.includes(item.status)).length:'—'}</b><small>{translate('noLedgerPosting')}</small></div><div className="account-metric"><span>{translate('withdrawalReservations')}</span><b>{hasWalletData?availableBalance===null?'Unavailable':money(pendingWithdrawal,currency):'—'}</b><small>{translate('requestsAwaitingReview',{currency})}</small></div><div className="account-metric"><span>{translate('enabledPaymentMethods')}</span><b>{methodLoadError?'—':methods.length}</b><small>{translate('configuredByAdministrator')}</small></div><div className="account-metric"><span>{translate('recentRequests')}</span><b>{hasWalletData?data.transactions.length:'—'}</b><small>{translate('latest100')}</small></div></div>
-		{submittedReceipt&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding request receipt</h2><p className="account-panel-subtitle">Your generated receipt records the request and its current review status.</p></div></div><ReceiptGenerator receipt={{id:submittedReceipt.id,reference:submittedReceipt.id,status:receiptStatus(submittedReceipt.status),type:submittedReceipt.type,accountMode:submittedReceipt.accountMode,simulated:submittedReceipt.currency!=='BTC',manualBitcoinDeposit:submittedReceipt.currency==='BTC'&&submittedReceipt.accountMode==='REAL',createdAt:submittedReceipt.createdAt,reviewedAt:submittedReceipt.reviewedAt,completedAt:submittedReceipt.settledAt,adminNote:submittedReceipt.adminNote,name:session?.user?.name||'',email:session?.user?.email||'',amount:submittedReceipt.amount,currency:submittedReceipt.currency,creditedAmount:submittedReceipt.creditedAmount??undefined,creditedCurrency:submittedReceipt.creditedCurrency,method:submittedReceipt.method,accountReference:`USER:${session?.user?.id||'account'}:${submittedReceipt.accountMode}:${submittedReceipt.currency}`,externalReference:submittedReceipt.transactionReference,recipientName:submittedReceipt.beneficiaryInfo,recipientNumber:submittedReceipt.destinationInfo,destinationNumber:submittedReceipt.destinationInfo,purpose:submittedReceipt.note}}/></section>}
+		{submittedReceipt&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding request receipt</h2><p className="account-panel-subtitle">Your generated receipt records the request and its current review status.</p></div></div><ReceiptGenerator receipt={{id:submittedReceipt.id,reference:submittedReceipt.id,status:receiptStatus(submittedReceipt.status),type:submittedReceipt.type,accountMode:submittedReceipt.accountMode,simulated:true,createdAt:submittedReceipt.createdAt,reviewedAt:submittedReceipt.reviewedAt,completedAt:submittedReceipt.settledAt,adminNote:submittedReceipt.adminNote,name:session?.user?.name||'',email:session?.user?.email||'',amount:submittedReceipt.amount,currency:submittedReceipt.currency,creditedAmount:submittedReceipt.creditedAmount??undefined,creditedCurrency:submittedReceipt.creditedCurrency,method:submittedReceipt.method,accountReference:`USER:${session?.user?.id||'account'}:${submittedReceipt.accountMode}:${submittedReceipt.currency}`,externalReference:submittedReceipt.transactionReference,recipientName:submittedReceipt.beneficiaryInfo,recipientNumber:submittedReceipt.destinationInfo,destinationNumber:submittedReceipt.destinationInfo,purpose:submittedReceipt.note}}/></section>}
 		{data.transactions.length>0&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding receipts</h2><p className="account-panel-subtitle">Download request and approval receipts for deposits and withdrawals recorded in this account.</p></div></div><div className="mt-4 grid gap-3">{data.transactions.slice(0,10).map(transaction=>{
 			const name=transaction.user?.name||session?.user?.name||'';
 			const email=transaction.user?.email||session?.user?.email||'';
-			const common={id:transaction.id,accountMode:transaction.accountMode,accountReference:`USER:${session?.user?.id||'account'}:${transaction.accountMode}:${transaction.currency}`,createdAt:transaction.createdAt,name,email,amount:transaction.amount,currency:transaction.currency,creditedAmount:transaction.creditedAmount??undefined,creditedCurrency:transaction.creditedCurrency,method:formatFundingMethodLabel(transaction.method),externalReference:transaction.transactionReference,recipientName:transaction.beneficiaryInfo,recipientNumber:transaction.destinationInfo,destinationNumber:transaction.destinationInfo,purpose:transaction.note,simulated:!(transaction.accountMode==='REAL'&&transaction.currency==='BTC'),manualBitcoinDeposit:transaction.accountMode==='REAL'&&transaction.currency==='BTC',previousBalance:transaction.previousBalance,resultingBalance:transaction.resultingBalance,adminNote:transaction.adminNote};
-			return <details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.accountMode}{transaction.accountMode==='REAL'&&transaction.currency==='BTC'?' REAL · BTC review':' simulated'} {transaction.type.toLowerCase()} · {money(Number(transaction.amount),transaction.currency)} · {statuses[transaction.status]||transaction.status}</summary><div className="grid min-w-0 gap-4 pt-3 xl:grid-cols-2"><ReceiptGenerator receipt={{...common,reference:transaction.settlementReference||transaction.id,status:receiptStatus(transaction.status),type:transaction.type,completedAt:transaction.settledAt,reviewedAt:transaction.reviewedAt,reviewedBy:transaction.reviewedBy}}/></div></details>;
+			const common={id:transaction.id,accountMode:transaction.accountMode,accountReference:`USER:${session?.user?.id||'account'}:${transaction.accountMode}:${transaction.currency}`,createdAt:transaction.createdAt,name,email,amount:transaction.amount,currency:transaction.currency,creditedAmount:transaction.creditedAmount??undefined,creditedCurrency:transaction.creditedCurrency,method:formatFundingMethodLabel(transaction.method),externalReference:transaction.transactionReference,recipientName:transaction.beneficiaryInfo,recipientNumber:transaction.destinationInfo,destinationNumber:transaction.destinationInfo,purpose:transaction.note,simulated:true,previousBalance:transaction.previousBalance,resultingBalance:transaction.resultingBalance,adminNote:transaction.adminNote};
+			return <details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.accountMode} internal {transaction.type.toLowerCase()} request · {money(Number(transaction.amount),transaction.currency)} · {statuses[transaction.status]||transaction.status}</summary><div className="grid min-w-0 gap-4 pt-3 xl:grid-cols-2"><ReceiptGenerator receipt={{...common,reference:transaction.settlementReference||transaction.id,status:receiptStatus(transaction.status),type:transaction.type,completedAt:transaction.settledAt,reviewedAt:transaction.reviewedAt,reviewedBy:transaction.reviewedBy}}/></div></details>;
 		})}</div></section>}
 		{data.adminLedgerReceipts.length>0&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Administrator ledger receipts</h2><p className="account-panel-subtitle">Administrator credits are recorded in this account’s ledger and included in the account balance.</p></div></div><div className="mt-4 grid gap-3">{data.adminLedgerReceipts.map(transaction=><details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.type==='CREDIT'?'Administrator credit':'Administrator debit'} · {money(Number(transaction.amount),transaction.currency)} · {new Date(transaction.createdAt).toLocaleString()}</summary><div className="pt-3"><ReceiptGenerator receipt={{id:transaction.id,reference:transaction.reference,status:'COMPLETED',type:transaction.type==='CREDIT'?'CREDIT':'DEBIT',accountMode:data.accountMode,simulated:data.accountMode==='REAL',createdAt:transaction.createdAt,name:session?.user?.name||'',email:session?.user?.email||'',amount:transaction.amount,currency:transaction.currency,method:transaction.description}}/></div></details>)}</div></section>}
 		<div className="account-content-grid">
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('fundingRequest')}</h2><p className="account-panel-subtitle">{translate('fundingRequestSubtitle')}</p></div><WalletCards size={18} className="gold" aria-hidden="true"/></div>
-				<>
-				<div className="account-callout account-mode-notice mt-4" role="status"><span><strong>{type==='DEPOSIT'&&bitcoinDisplayAddress?'Bitcoin Deposit':realBitcoinDeposit?'REAL BTC deposit request':'Administrator-reviewed deposit request'}</strong><br/>{type==='DEPOSIT'&&bitcoinDisplayAddress?'Aurevia cannot receive, custody, or independently verify Bitcoin. The configured address is for reference only; do not send real BTC. Any approved request creates only a simulated credit in this mode’s internal paper ledger.':realBitcoinDeposit?'BTC submissions require manual evidence review and a separately approved, explicit USD credit.':'Requests remain pending until an authorized administrator reviews them. Approval credits only this mode’s internal paper ledger; no external money moves.'}</span></div>
-				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
+				{data.accountMode==='DEMO'?<div className="account-callout account-mode-notice mt-4" role="status">Deposits and withdrawals are available in REAL Mode only.</div>:<>
+				<div className="account-callout account-mode-notice mt-4" role="status"><span><strong>{type==='DEPOSIT'?'Internal REAL ledger credit request':'Internal REAL ledger withdrawal request'}</strong><br/>This workflow records requests only in Aurevia’s ledger. No external payment, blockchain verification, bank payout, or cryptocurrency transfer is processed. Your balance changes only after an authorized administrator approves the request. References and attachments, if provided, are user-submitted information and are not independently verified.</span></div>
+				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
-					{manualRealFunding&&!realBitcoinDeposit&&<div className="account-callout" role="status"><span>Requests are recorded in the {data.accountMode} internal ledger. No payment evidence or external destination is required.</span></div>}
-					{type==='DEPOSIT'&&bitcoinDisplayAddress&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="Administrator-posted Bitcoin deposit address">
-						<div><h3 className="font-semibold">Deposit Address</h3><p className="mt-1 text-sm text-amber-100">Aurevia’s paper-trading ledger cannot receive, custody, or verify Bitcoin. This administrator-configured address is shown for reference only. Do not initiate a real BTC transfer based on this screen.</p></div>
-						<div className="grid gap-4 sm:grid-cols-[220px_minmax(0,1fr)] sm:items-center">
-							<div className="flex min-h-[220px] items-center justify-center rounded-xl border border-white/10 bg-[#0b0f19] p-3">
-								{bitcoinQr?<Image src={bitcoinQr} alt="QR code for the administrator-configured Bitcoin address" width={196} height={196} unoptimized className="h-[196px] w-[196px] rounded-md"/>:bitcoinQrError?<p className="text-xs text-amber-100" role="status">{bitcoinQrError}</p>:<p className="text-xs muted" role="status">Generating address QR code…</p>}
-							</div>
-							<div className="grid gap-3">
-								<label className="account-label">Bitcoin address<input className="input font-mono" type="text" readOnly value={bitcoinDisplayAddress} aria-describedby="simulated-bitcoin-address-note"/></label>
-								<code id="simulated-bitcoin-address-note" className="block break-all rounded-lg bg-black/20 p-3 text-sm">{bitcoinDisplayAddress}</code>
-								<p className="text-xs muted">Bitcoin network information has not been configured separately.</p>
-								<div className="flex flex-wrap gap-2">
-									<button type="button" className="btn min-h-11 bg-white/5" onClick={()=>void copyDestination()}><Copy size={15}/>{copied?'Address copied':'Copy address'}</button>
-									<button type="button" className="btn min-h-11 bg-white/5" aria-pressed={bitcoinAddressAcknowledged} onClick={()=>setBitcoinAddressAcknowledged(true)}>Skip – I already have the address</button>
-								</div>
-								{bitcoinAddressAcknowledged&&<span className="text-xs text-profit" role="status">Address confirmed for this request.</span>}
-							</div>
-						</div>
-					</div>}
 					{(selectedMethod||manualRealFunding)&&<>
-						{type==='DEPOSIT'&&bitcoinDisplayAddress&&<h3 className="font-semibold">Transaction Submission</h3>}
-						{!realBitcoinDeposit&&<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
-						<label className="account-label">{realBitcoinDeposit?'Bitcoin amount (BTC)':translate('amount',{currency})}<input className="input" type="number" min={realBitcoinDeposit?'0.00000001':type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step={realBitcoinDeposit?'0.00000001':'any'} inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder={realBitcoinDeposit?'0.00000000':'0.00'}/></label>
-						{realBitcoinDeposit&&<>
-							<label className="account-label">Bitcoin transaction reference (optional)<input className="input font-mono" type="text" minLength={64} maxLength={64} pattern="[A-Fa-f0-9]{64}" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="Transaction reference, if available"/></label>
-							<label className="account-label">Proof of payment (required)<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required aria-label="Required screenshot for REAL BTC deposit review" onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">Image only, maximum 5 MB. The file and transaction reference are submitted for administrator review; neither is independent blockchain confirmation.</small></label>
-						</>}
-						{type==='DEPOSIT'&&!realBitcoinDeposit?<>
-							<label className="account-label">Request reference (optional)<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="Internal reference only"/></label>
-							<label className="account-label">{depositEvidenceRequired?'Receipt for administrator review (required)':'Optional evidence attachment'}<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required={depositEvidenceRequired} aria-label={depositEvidenceRequired?'Required receipt for administrator review':'Optional evidence attachment for this simulated request'} onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">The file is stored privately for administrator review. It does not verify or process a payment.</small></label>
-						</>:<>
-							<div className="account-callout"><span>Available simulated balance: {availableBalance===null?'Unavailable':money(availableBalance,currency)}. The requested amount is reserved while an administrator reviews it.</span></div>
-						</>}
+						<label className="account-label">{translate('amount',{currency:'USD'})}<input className="input" type="number" min="0.01" max="100000000" step="0.01" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
+						{type==='DEPOSIT'?<>
+							<label className="account-label">Request reference (optional)<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder="Internal reference or context"/></label>
+							<label className="account-label">Optional attachment for administrator review<input className="input" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Optional supporting attachment" onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">An attachment is user-submitted information only. It is not independently verified evidence of an external payment.</small></label>
+						</>:<div className="account-callout"><span>Available REAL balance after pending reservations: {availableBalance===null?'Unavailable':money(availableBalance,'USD')}. Approval debits the internal ledger exactly once; no external destination is used.</span></div>}
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
 					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{type==='DEPOSIT'&&bitcoinDisplayAddress&&<section className="account-callout account-mode-notice" aria-label="Administrator review information"><div><h3 className="font-semibold">Administrator Review</h3><p className="mt-1">An Aurevia administrator will review the request details and uploaded proof. Neither the transaction reference nor the image confirms receipt of funds. If approved, the request credits only this mode’s internal paper ledger.</p><p className="mt-2 text-sm"><strong>Status: Pending Administrator Review</strong> after submission</p></div></section>}
-					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),realBitcoinDeposit?'BTC':currency)} via {realBitcoinDeposit?'BTC manual review':selectedMethod?.name||(manualRealFunding?'internal administrator review':'Manual administrator review')} in the {data.accountMode} account. {realBitcoinDeposit?'The evidence is reviewed manually and does not confirm blockchain receipt; approval posts an explicit USD credit to the paper ledger.':'This records a request for review and the ledger is posted only after approval.'}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!bitcoinDisplayAddress||!!bitcoinDisplayAddress&&!bitcoinAddressAcknowledged||!bitcoinDepositReady||realBitcoinDeposit&&!realKycApproved))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||availableBalance<=0))}>{realBitcoinDeposit?'Submit BTC deposit request':type==='DEPOSIT'?'Submit deposit request':'Submit withdrawal request'}</button>}
+					{type==='DEPOSIT'&&<section className="account-callout account-mode-notice" aria-label="Administrator review information"><div><h3 className="font-semibold">Administrator Review</h3><p className="mt-1">Status: Pending Administrator Review. An approved request creates an internal ledger credit only. Aurevia does not receive or verify external funds.</p></div></section>}
+					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),'USD')} in the REAL account. This is an internal ledger request only. No external payment or transfer will occur; an administrator must approve the request before your available balance changes.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!realKycApproved))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||availableBalance<=0))}>{type==='DEPOSIT'?'Submit internal credit request':'Submit internal withdrawal request'}</button>}
 				</form>
-				</>
+				</>}
 			</section>
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('transactionHistory')}</h2><p className="account-panel-subtitle">{translate('transactionHistorySubtitle')}</p></div><div className="flex items-center gap-2"><Link className="text-link" href="/wallet/transactions">{translate('fullHistory')}</Link><button type="button" className="icon-action" aria-label={translate('refreshWalletHistory')} onClick={()=>void load(true)}><RefreshCw size={15}/></button></div></div>
-				{loading?<div className="account-empty" role="status">{translate('loadingWallet')}</div>:!hasWalletData?<div className="account-empty transaction-history-error" role="status">Transaction history is unavailable until wallet data can be loaded.</div>:data.transactions.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>{translate('request')}</th><th>{translate('amount')}</th><th>{translate('status')}</th><th>{translate('receipt')}</th></tr></thead><tbody>{data.transactions.map(transaction=><tr key={transaction.id}><td><Link className="transaction-kind" href={`/wallet/transactions/${encodeURIComponent(transaction.id)}`}>{transaction.type==='DEPOSIT'?<ArrowDownLeft size={13}/>:<ArrowUpRight size={13}/>} {transaction.type}<small className="transaction-method">{formatFundingMethodLabel(transaction.method)}</small><small className="transaction-method">{transaction.id}</small></Link></td><td>{money(Number(transaction.amount),transaction.currency)}</td><td><span className="status-pill">{statuses[transaction.status]||transaction.status}</span></td><td>{transaction.type==='DEPOSIT'&&reserves.includes(transaction.status)?<div className="grid min-w-40 gap-1"><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" aria-label={translate('chooseReceipt',{id:transaction.id})} onChange={event=>setReceiptFiles(current=>({...current,[transaction.id]:event.target.files?.[0]}))}/><button type="button" className="btn min-h-11 bg-white/5" disabled={!receiptFiles[transaction.id]||receiptBusy===transaction.id} onClick={()=>void uploadReceipt(transaction)}>{receiptBusy===transaction.id?translate('uploading'):translate('uploadReceipt')}</button>{transaction.hasReceipt&&<button type="button" className="text-link" onClick={()=>void openReceipt(transaction.id)}>{translate('viewPrivateReceipt')}</button>}</div>:transaction.hasReceipt?<button type="button" className="text-link" onClick={()=>void openReceipt(transaction.id)}>{translate('viewPrivateReceipt')}</button>:'Not available'}</td></tr>)}</tbody></table></div>:<div className="account-empty" role="status">No funding transactions have been submitted yet.</div>}
+				{loading?<div className="account-empty" role="status">{translate('loadingWallet')}</div>:!hasWalletData?<div className="account-empty transaction-history-error" role="status">Transaction history is unavailable until wallet data can be loaded.</div>:data.transactions.length?<div className="account-table-wrap"><table className="account-table"><thead><tr><th>{translate('request')}</th><th>{translate('amount')}</th><th>{translate('status')}</th><th>{translate('receipt')}</th></tr></thead><tbody>{data.transactions.map(transaction=><tr key={transaction.id}><td><Link className="transaction-kind" href={`/wallet/transactions/${encodeURIComponent(transaction.id)}`}>{transaction.type==='DEPOSIT'?<ArrowDownLeft size={13}/>:<ArrowUpRight size={13}/>} {transaction.type}<small className="transaction-method">{formatFundingMethodLabel(transaction.method)}</small><small className="transaction-method">{transaction.id}</small></Link></td><td>{money(Number(transaction.amount),transaction.currency)}</td><td><span className="status-pill">{statuses[transaction.status]||transaction.status}</span></td><td>{data.accountMode==='DEMO'?'Deposits and withdrawals are available in REAL Mode only.':transaction.type==='DEPOSIT'&&reserves.includes(transaction.status)?<div className="grid min-w-40 gap-1"><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" aria-label={translate('chooseReceipt',{id:transaction.id})} onChange={event=>setReceiptFiles(current=>({...current,[transaction.id]:event.target.files?.[0]}))}/><button type="button" className="btn min-h-11 bg-white/5" disabled={!receiptFiles[transaction.id]||receiptBusy===transaction.id} onClick={()=>void uploadReceipt(transaction)}>{receiptBusy===transaction.id?translate('uploading'):translate('uploadReceipt')}</button>{transaction.hasReceipt&&<button type="button" className="text-link" onClick={()=>void openReceipt(transaction.id)}>{translate('viewPrivateReceipt')}</button>}</div>:transaction.hasReceipt?<button type="button" className="text-link" onClick={()=>void openReceipt(transaction.id)}>{translate('viewPrivateReceipt')}</button>:'Not available'}</td></tr>)}</tbody></table></div>:<div className="account-empty" role="status">No funding transactions have been submitted yet.</div>}
 			</section>
 		</div>
 	</main></>;

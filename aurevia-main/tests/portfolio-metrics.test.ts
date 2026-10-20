@@ -44,23 +44,17 @@ describe('portfolio metrics',()=>{
 		expect(recordedInvestmentPnl(new Prisma.Decimal('1000'),new Prisma.Decimal('1080')).toFixed(2)).toBe('80.00');
 	});
 
-	it('limits REAL withdrawals to verified BTC credits less completed and pending withdrawals',()=>{
+	it('limits REAL withdrawals to available ledger funds after pending reservations',()=>{
 		expect(calculateRealWithdrawableBalance({
 			ledgerBalance:'1080',
-			verifiedBtcCredits:'1000',
-			completedWithdrawals:'100',
 			pendingWithdrawals:'200',
-		}).toFixed(2)).toBe('700.00');
+		}).toFixed(2)).toBe('880.00');
 		expect(calculateRealWithdrawableBalance({
 			ledgerBalance:'500',
-			verifiedBtcCredits:'0',
-			completedWithdrawals:'0',
 			pendingWithdrawals:'0',
-		}).toFixed(2)).toBe('0.00');
+		}).toFixed(2)).toBe('500.00');
 		expect(calculateRealWithdrawableBalance({
 			ledgerBalance:'20',
-			verifiedBtcCredits:'100',
-			completedWithdrawals:'0',
 			pendingWithdrawals:'30',
 		}).toFixed(2)).toBe('0.00');
 	});
