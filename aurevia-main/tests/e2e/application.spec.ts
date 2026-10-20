@@ -1006,7 +1006,7 @@ test('dashboard presents a responsive portfolio activity hub',async({page})=>{
 	await expect(page.getByRole('heading',{name:'My Portfolio'})).toBeVisible();
 	await expect(page.getByRole('heading',{name:'Portfolio performance'})).toBeVisible();
 	await expect(page.getByRole('heading',{name:'Asset allocation'})).toBeVisible();
-	await expect(page.getByRole('link',{name:/Deposit/})).toHaveAttribute('href','/wallet?type=DEPOSIT');
+	await expect(page.getByRole('link',{name:/Deposit/})).toHaveCount(0);
 	await expect(page.getByRole('link',{name:/Explore investments/})).toHaveAttribute('href','/investments');
 	await expect(page.getByRole('link',{name:/Transaction history/})).toHaveAttribute('href','/wallet/transactions');
 	await expect(page.getByRole('button',{name:'1D'})).toBeVisible();
@@ -1246,10 +1246,10 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 			expect((await nonUsdDeposit.json()).error).toContain('USD');
 			await page.goto('/wallet');
 			await expect(page.getByText(/internal REAL ledger credit request/i)).toBeVisible();
-			await expect(page.getByLabel('Amount (USD)')).toBeVisible();
+			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 			await expect(page.getByLabel('Request reference (optional)')).toBeVisible();
 			await expect(page.getByLabel('Bitcoin transaction reference')).toHaveCount(0);
-			await expect(page.getByLabel('Optional attachment for administrator review')).toBeVisible();
+			await expect(page.getByLabel('Optional supporting attachment')).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/REAL investment activity is simulated/i)).toBeVisible();
 		const realRequestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
@@ -1287,7 +1287,7 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		await page.getByRole('button',{name:'Reset DEMO'}).click();
 		await page.getByLabel('Type RESET DEMO ACCOUNT to confirm').fill('RESET DEMO ACCOUNT');
 		await page.getByRole('button',{name:'Confirm DEMO reset'}).click();
-		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $5,000.00');
+		await expect(page.getByText(/DEMO portfolio reset to \$5,000\.00/)).toBeVisible();
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(finalRealBalance);
