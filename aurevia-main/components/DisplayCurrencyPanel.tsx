@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from 'react';
 
-type Rate={rate:string|number|null;source:string|null;observedAt:string|null;status:'CURRENT'|'STALE'|'UNAVAILABLE'};
+type Rate={rate:string|number|null;source:string|null;observedAt:string|null;status:'CURRENT'|'STALE'|'INTERNAL'|'UNAVAILABLE'};
 type Props={values:Array<{label:string;amount:string|null}>};
 const currencies=['USD','EUR','GBP','NGN','CAD','AUD','CHF','JPY'];
 const money=(amount:number,currency:string)=>new Intl.NumberFormat(undefined,{style:'currency',currency,minimumFractionDigits:2,maximumFractionDigits:2}).format(amount);
@@ -12,7 +12,7 @@ export default function DisplayCurrencyPanel({values}:Props){
 	const [rate,setRate]=useState<Rate|null>(null);
 	const [error,setError]=useState('');
 	const [ready,setReady]=useState(false);
-	const currentRate=rate?.status==='CURRENT'&&rate.rate!==null&&Number.isFinite(Number(rate.rate))&&Number(rate.rate)>0?Number(rate.rate):null;
+	const currentRate=rate?.rate!==null&&rate?.rate!==undefined&&Number.isFinite(Number(rate.rate))&&Number(rate.rate)>0?Number(rate.rate):null;
 	useEffect(()=>{
 		let active=true;
 		void fetch('/api/currency-preference',{cache:'no-store'}).then(async response=>{
@@ -51,8 +51,8 @@ export default function DisplayCurrencyPanel({values}:Props){
 				{currency==='USD'
 					?<p>Balances remain recorded in USD. Changing this preference never exchanges funds.</p>
 					:currentRate!==null
-						?<><p>Exchange rate: 1 USD = {currentRate.toLocaleString(undefined,{maximumSignificantDigits:10})} {currency}</p><div className="grid gap-1 sm:grid-cols-2">{values.map(({label,amount})=><p key={label}><span className="muted">{label}: </span>{amount===null?'Unavailable':`${money(Number(amount)*currentRate,currency)} approximate`} <span className="text-xs muted">(original: {amount===null?'Unavailable':money(Number(amount),'USD')})</span></p>)}</div><p className="mt-2 text-xs muted">Display conversion only · {rate?.source} · updated {rate?.observedAt?new Date(rate.observedAt).toLocaleString():'time unavailable'}</p></>
-						:<p className="text-xs text-amber-200">{rate?.status==='STALE'?'The exchange rate is stale; converted amounts are hidden.':rate===null&&!error?'Loading configured exchange rate…':error||'A current configured exchange rate is unavailable; converted amounts are hidden.'}</p>}
+						?<><p>Exchange rate: 1 USD = {currentRate.toLocaleString(undefined,{maximumSignificantDigits:10})} {currency}</p><div className="grid gap-1 sm:grid-cols-2">{values.map(({label,amount})=><p key={label}><span className="muted">{label}: </span>{amount===null?'Unavailable':`${money(Number(amount)*currentRate,currency)} approximate`} <span className="text-xs muted">(original: {amount===null?'Unavailable':money(Number(amount),'USD')})</span></p>)}</div><p className="mt-2 text-xs muted">{rate?.status==='INTERNAL'?'Internal reference rate · ':rate?.status==='STALE'?'Last known rate · may be outdated · ':''}Display conversion only · {rate?.source} · {rate?.observedAt?`updated ${new Date(rate.observedAt).toLocaleString()}`:'no provider timestamp'}</p></>
+						:<p className="text-xs text-amber-200">{rate===null&&!error?'Loading exchange rate…':error||'A reference exchange rate is unavailable.'}</p>}
 				{error&&<p className="mt-1 text-xs text-loss" role="alert">{error}</p>}
 			</div>
 		</div>

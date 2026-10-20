@@ -59,7 +59,7 @@ export async function executeOrderTx(tx:Prisma.TransactionClient,orderId:string,
  await tx.execution.create({data:{orderId:order.id,accountMode:order.accountMode,quantity,price:fillPrice,fee}});
  await tx.order.update({where:{id:order.id},data:{filledQuantity:{increment:quantity},averageFillPrice:fillPrice,fee:{increment:fee},status:OrderStatus.FILLED}});
  await tx.auditLog.create({data:{actorId:order.userId,action:`${order.accountMode==='DEMO'?'DEMO':'REAL_SIMULATED'}_ORDER_${order.side}_FILLED`,entity:'ORDER',entityId:order.id,metadata:{oldState:OrderStatus.OPEN,newState:OrderStatus.FILLED,accountMode:order.accountMode,simulated:true,instrument:order.instrument.symbol,quantity:quantity.toString(),fillPrice:fillPrice.toString(),fee:fee.toString()}}});
- await createNotification(tx,{userId:order.userId,type:NotificationType.TRADE,title:`${order.accountMode} simulated order filled`,message:`Your ${order.side.toLowerCase()} order for ${order.instrument.symbol} filled ${quantity.toString()} at ${fillPrice.toString()} using simulated trading. No external order was placed.`,dedupeKey:`order:${order.id}:filled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
+ await createNotification(tx,{userId:order.userId,type:NotificationType.TRADE,title:`${order.accountMode} order filled`,message:`Your ${order.side.toLowerCase()} order for ${order.instrument.symbol} filled ${quantity.toString()} at ${fillPrice.toString()} in the internal paper-trading environment.`,dedupeKey:`order:${order.id}:filled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
  return tx.order.findUnique({where:{id:order.id},include:{executions:true,instrument:true}});
 }
 
@@ -130,7 +130,7 @@ export async function placeOrder(userId:string,accountMode:AccountMode,input:Pla
    }
   const order=await tx.order.create({data:{userId,instrumentId:inst.id,accountMode,side:input.side,type:input.type,quantity:input.quantity,price,stopPrice:stop,idempotencyKey,status:OrderStatus.OPEN}});
   await tx.auditLog.create({data:{actorId:userId,action:`${accountMode}_SIMULATED_ORDER_SUBMITTED`,entity:'ORDER',entityId:order.id,metadata:{newState:OrderStatus.OPEN,accountMode,simulated:true,instrumentId:inst.id,side:input.side,type:input.type,quantity:order.quantity.toString(),expectedPrice:input.expectedPrice,observedAt:input.observedAt}}});
-  await createNotification(tx,{userId,type:NotificationType.TRADE,title:`${accountMode} simulated order submitted`,message:`Your ${input.side.toLowerCase()} ${input.type.toLowerCase()} order for ${inst.symbol} was submitted using simulated execution. No external order was placed.`,dedupeKey:`order:${order.id}:submitted`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
+  await createNotification(tx,{userId,type:NotificationType.TRADE,title:`${accountMode} order submitted`,message:`Your ${input.side.toLowerCase()} ${input.type.toLowerCase()} order for ${inst.symbol} was submitted to the internal paper-trading engine.`,dedupeKey:`order:${order.id}:submitted`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
    if(!executable(input.type,input.side,market,price,stop))return order;
    return executeOrderTx(tx,order.id,market);
  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});

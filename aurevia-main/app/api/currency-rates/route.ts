@@ -6,6 +6,7 @@ import {rateLimit} from '@/lib/rate-limit';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getFinnhubQuote} from '@/lib/providers/finnhub-market-data';
 import type {LiveMarketAsset} from '@/lib/live-market';
+import {INTERNAL_USD_REFERENCE_RATES} from '@/lib/config/internal-currency-rates';
 
 const targets=['EUR','GBP','NGN','CAD','AUD','CHF','JPY'] as const;
 const schema=z.object({to:z.enum(targets)});
@@ -39,12 +40,14 @@ export async function GET(request:Request){
 				}
 			}
 		}
-		if(cached){
+		if(cached&&Number(cached.rate)>0&&Number.isFinite(Number(cached.rate))){
 			const age=Date.now()-cached.observedAt.getTime();
 			const current=Number.isFinite(age)&&age>=-5_000&&age<=maxRateAgeMs;
 			return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate:cached.rate,source:cached.source,observedAt:cached.observedAt,status:current?'CURRENT':'STALE'},{headers:{'Cache-Control':'private, no-store'}});
 		}
-		return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate:null,source:null,observedAt:null,status:'UNAVAILABLE'},{headers:{'Cache-Control':'private, no-store'}});
+		const rate=INTERNAL_USD_REFERENCE_RATES[to];
+		if(rate===undefined)throw new Error(`Internal reference rate is not configured for ${to}.`);
+		return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate,source:'Aurevia internal reference rate',observedAt:null,status:'INTERNAL'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Unsupported display currency.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});

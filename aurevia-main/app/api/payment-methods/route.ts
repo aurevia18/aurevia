@@ -25,6 +25,6 @@ export async function GET(){
 		},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
-		return NextResponse.json({error:'Simulated funding workflows are temporarily unavailable.'},{status:503,headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json({error:'Funding requests are temporarily unavailable.'},{status:503,headers:{'Cache-Control':'private, no-store'}});
 	}
 }

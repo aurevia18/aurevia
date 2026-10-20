@@ -1,0 +1,36 @@
+import {beforeEach,describe,expect,it,vi} from 'vitest';
+
+const mocks=vi.hoisted(()=>({instrumentFindFirst:vi.fn(),candleFindFirst:vi.fn()}));
+vi.mock('@/lib/db',()=>({db:{instrument:{findFirst:mocks.instrumentFindFirst},candle:{findFirst:mocks.candleFindFirst}}}));
+
+import {getInternalMarketQuote} from '@/lib/internal-market-data';
+
+const bitcoin={id:'BTC',ticker:'BTC-USD',name:'Bitcoin USD',type:'CRYPTO' as const,currency:'USD'};
+
+beforeEach(()=>{
+	mocks.instrumentFindFirst.mockReset().mockResolvedValue({id:'btc-instrument',price:'101000'});
+	mocks.candleFindFirst.mockReset().mockResolvedValue({open:'99000'});
+});
+
+describe('internal paper-market quotes',()=>{
+	it('uses the internal trading instrument and its current-day candle when present',async()=>{
+		const quote=await getInternalMarketQuote(bitcoin);
+		expect(quote).toMatchObject({
+			price:101000,previousClose:99000,open:99000,source:'Aurevia Internal',isStale:false,volume:null,
+		});
+		expect(quote.change).toBe(2000);
+		expect(quote.changePercent).toBeCloseTo(2000/99000*100);
+		expect(quote.dayLow).toBeLessThanOrEqual(quote.price);
+		expect(quote.dayHigh).toBeGreaterThanOrEqual(quote.price);
+		expect(mocks.candleFindFirst).toHaveBeenCalledOnce();
+	});
+
+	it('generates a positive internal reference price when no matching trading instrument exists',async()=>{
+		mocks.instrumentFindFirst.mockResolvedValue(null);
+		const quote=await getInternalMarketQuote({...bitcoin,id:'AAPL',ticker:'AAPL',name:'Apple Inc.',type:'STOCK'});
+		expect(quote.source).toBe('Aurevia Internal');
+		expect(quote.price).toBeGreaterThan(0);
+		expect(quote.volume).toBeNull();
+		expect(mocks.candleFindFirst).not.toHaveBeenCalled();
+	});
+});

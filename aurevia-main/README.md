@@ -62,7 +62,7 @@ Financial, identity-review, and audit records are intentionally not recyclable: 
 
 ### Live market dashboard
 
-The `/markets` page uses the server-only `FINNHUB_API_KEY` when configured and falls back to Yahoo Finance's unofficial chart endpoint if Finnhub is unavailable or lacks an instrument. Quotes refresh every five seconds for the selected asset; watchlist quotes refresh every 30 seconds, and server-side in-process caching reduces duplicate provider requests. Historical OHLCV data supports the displayed ranges and is cached for up to one minute. Provider timestamps and source are shown, and the last successful quote is explicitly marked stale when reused; provider errors are never replaced with invented prices. Yahoo Finance is not an official API and can delay, limit, or discontinue access. Watchlists are stored on the device in separate public/account scopes. The ticker and chart are informational and are not connected to trade execution.
+The `/markets` page uses server-only Finnhub data when `FINNHUB_API_KEY` is configured and the selected quote/history is current. When the key is absent or Finnhub fails or returns stale data, the page falls back to clearly labeled Aurevia Internal paper-market prices and generated reference history; it does not depend on another external provider. The page displays `Market data: Live` only for a current Finnhub quote and `Market data: Internal` for the internal fallback. Selected quotes refresh every five seconds and watchlists every 30 seconds. This informational market view is separate from paper-order execution.
 
 ## Important scope boundary
 
@@ -148,7 +148,8 @@ Private file workflows require server-only `SUPABASE_URL` and `SUPABASE_SERVICE_
 | Capability | Provider/configuration | Current behavior without provider |
 | --- | --- | --- |
 | Database | Supabase Postgres; `DATABASE_URL`, `DIRECT_URL` | Server operations fail explicitly; no in-memory financial fallback |
-| Market information | Finnhub when `FINNHUB_API_KEY` is configured; Yahoo Finance chart endpoint as an unofficial fallback | Live market screens show provider source and freshness; provider failures show unavailable/stale data; internal prices are separately labelled simulated |
+| Market information | Finnhub when configured and responsive; Aurevia Internal paper-market data otherwise | The market screen shows `Market data: Live` only for current Finnhub quotes and `Market data: Internal` for fallback prices and reference history |
+| Display currency | Finnhub exchange quotes when available; last known database rate, then an internal reference-rate table | Approximate display conversion only; source and stale/internal status are disclosed; ledger values are never converted |
 | Broker/execution | Aurevia internal simulated execution for each mode, with ledger and position isolation | Customer orders do not reach an external broker; live execution disabled |
 | Deposits and withdrawals | Funding-provider contract only; no bank, card, blockchain, or custody adapter | REAL BTC credits require separate manual verification and approval; withdrawals are capped to verified BTC-funded balance and remain incomplete without a payout provider |
 | Investments | No investment execution/settlement provider | Allocations reserve internal funds; settlement returns reserved principal only and never converts an estimated target return into earnings |

@@ -166,7 +166,7 @@ export default function Trade() {
       });
       const result = await response.json();
       setMsg(response.ok
-        ? `${accountMode} simulated order ${String(result.status||'accepted').replaceAll('_',' ').toLowerCase()}.`
+        ? result.status==='FILLED'?'Order filled.':result.status==='PARTIALLY_FILLED'?'Order partially filled.':`Order ${String(result.status||'submitted').replaceAll('_',' ').toLowerCase()}.`
         : result.error || "Order failed");
       if (response.ok) {
         setOrders((current) => [result, ...current]);
@@ -207,7 +207,7 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your active paper account.':`${accountMode} orders use your separate Aurevia paper balance and simulated execution.`}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':`${accountMode} · SIMULATED`}</span></header>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your active paper account.':`${accountMode} orders use your separate Aurevia paper account and internally matched execution.`}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':`${accountMode} · SIMULATED`}</span></header>
         {(accountMode==='REAL'||accountMode==='DEMO')?<>
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">
@@ -291,7 +291,7 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP">Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
+              <div className="trade-estimate" aria-live="polite"><div><span>Available balance · {accountMode}</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
               <p className="trade-estimate-note">Quotes, order matching, positions, and P/L are simulated and isolated to this {accountMode} account. No order is sent to an external broker or exchange.</p>
               <button type="submit" disabled={placing||!selected} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>

@@ -106,6 +106,24 @@ test('homepage investment testimonials use only verified stories and stay compac
 	}
 });
 
+test('market view uses disclosed internal quotes and chart history without Finnhub',async({page})=>{
+	const quotes=await page.request.get('/api/live-markets?symbols=AAPL,BTC');
+	expect(quotes.ok()).toBe(true);
+	const quoteData=await quotes.json();
+	expect(quoteData.marketDataStatus).toBe('INTERNAL');
+	expect(quoteData.quotes).toHaveLength(2);
+	for(const quote of quoteData.quotes){
+		expect(quote).toMatchObject({source:'Aurevia Internal',isStale:false});
+		expect(quote.price).toBeGreaterThan(0);
+	}
+	const history=await page.request.get('/api/live-markets/AAPL?timeframe=1d').then(response=>response.json());
+	expect(history).toMatchObject({source:'Aurevia Internal',timeframe:'1d'});
+	expect(history.candles).toHaveLength(60);
+	await page.goto('/markets');
+	await expect(page.getByText('Market data: Internal').first()).toBeVisible();
+	await expect(page.getByText(/Chart history is internally generated for this paper-market view/)).toBeVisible();
+});
+
 test('portfolio timeframe controls filter authenticated snapshot history accessibly on mobile',async({page})=>{
 	await page.setViewportSize({width:320,height:800});
 	await loginAs(page,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
@@ -738,6 +756,7 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	const mode=page.getByLabel('Account mode');
 	await page.goto('/wallet');
 	await expect(page.locator('.account-heading .account-kicker')).toContainText('DEMO ACCOUNT');
+	await expect(page.locator('.account-heading .status-pill')).toContainText('DEMO');
 	let releaseModeUpdate!:()=>void;
 	const modeUpdateGate=new Promise<void>(resolve=>{releaseModeUpdate=resolve});
 	await page.route('**/api/account/mode',async route=>{await modeUpdateGate;await route.continue()});
@@ -747,6 +766,7 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
 	await expect(page.locator('.account-heading .account-kicker')).toContainText('REAL ACCOUNT');
+	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL');
 	await expect(page.locator('.wallet-balance-value')).toHaveText('$100,000.00');
 	await page.goto('/wallet/transactions');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL ACCOUNT');
@@ -758,13 +778,17 @@ test('account-mode changes initialize and isolate wallet, trade, history, and su
 	await expect(page.getByRole('heading',{name:'Asset allocation'})).toBeVisible();
 	await expect(page.locator('.portfolio-live-dot')).toBeVisible();
 	await expect(page.locator('.status-pill').filter({hasText:'DEMO ACCOUNT'})).toBeVisible();
+	await page.goto('/portfolio');
+	await expect(page.locator('.portfolio-heading-actions .status-pill')).toContainText('DEMO ACCOUNT');
 	await selectAccountMode(page,'REAL');
-	await expect(page.locator('.status-pill').filter({hasText:'REAL ACCOUNT'})).toBeVisible();
+	await expect(page.locator('.portfolio-heading-actions .status-pill')).toContainText('REAL ACCOUNT');
 	await page.goto('/trade');
 	await selectAccountMode(page,'REAL');
-	await expect(page.getByText(/REAL orders use your separate Aurevia paper balance/)).toBeVisible();
+	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL');
+	await expect(page.getByText(/REAL orders use your separate Aurevia paper account/)).toBeVisible();
 	await expect(page.getByRole('button',{name:'Place BUY order'})).toBeEnabled();
 	await selectAccountMode(page,'DEMO');
+	await expect(page.locator('.account-heading .status-pill')).toContainText('DEMO');
 	await expect(page.getByRole('button',{name:'Place BUY order'})).toBeEnabled();
 	await page.goto('/support');
 	await page.getByRole('button',{name:'Contact Admin'}).click();
@@ -877,7 +901,7 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 		await page.goto('/wallet');
 		await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
 		await expect(page.locator('.wallet-balance-value')).toHaveText('$100,000.00');
-		await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+		await expect(page.getByRole('status').filter({hasText:'Administrator-reviewed deposit request'})).toBeVisible();
 		await expect(page.getByLabel('Payment method')).toHaveCount(0);
 		await expect(page.locator('.wallet-type-switch')).toBeVisible();
 		await page.getByRole('button',{name:'Hide balances'}).click();
@@ -887,7 +911,7 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 		await page.getByRole('button',{name:'Refresh wallet history'}).click();
 		await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
 		await expect(page.locator('.wallet-balance-value')).toHaveText('$100,000.00');
-		await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+		await expect(page.getByRole('status').filter({hasText:'Administrator-reviewed deposit request'})).toBeVisible();
 		await page.unroute('**/api/payment-methods');
 		await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
 		await page.getByRole('button',{name:'Refresh wallet history'}).click();
@@ -1182,9 +1206,15 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		await review(demoRequest.id,'activate');
 		await expect(demoRequestRow).toContainText('ACTIVE',{timeout:10_000});
 		await page.goto('/dashboard');
+		await expect(page.getByText('Overall recorded portfolio value')).toBeVisible();
+		await expect(page.getByRole('heading',{name:'Portfolio performance'})).toBeVisible();
+		await expect(page.getByRole('heading',{name:'Asset allocation'})).toBeVisible();
+		await expect(page.getByRole('heading',{name:'Holdings'})).toBeVisible();
+		await expect(page.getByRole('heading',{name:'Investment activity'})).toBeVisible();
 		const portfolioInvestment=page.locator('.portfolio-investment-row').filter({hasText:'E2E simulated opportunity'});
 		await expect(portfolioInvestment).toContainText('ACTIVE');
 		await expect(portfolioInvestment).toContainText('$1,000.00');
+		await expect(portfolioInvestment).toContainText('$1,000.00 principal');
 		const portfolioHolding=page.locator('.portfolio-holding').filter({hasText:'E2E simulated opportunity'});
 		await expect(portfolioHolding).toContainText('$1,000.00');
 		await page.goto('/investments');
@@ -1802,7 +1832,7 @@ test('DEMO funding requests are admin-reviewed, idempotent, and ledger-backed',a
 		const ownApproval=await page.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'APPROVED'}});
 		expect(ownApproval.status()).toBe(403);
 		await page.goto('/wallet');
-		await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+		await expect(page.getByRole('status').filter({hasText:'Administrator-reviewed deposit request'})).toBeVisible();
 		await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 		const adminId=(await db.user.findUniqueOrThrow({where:{email:fixture('ADMIN_EMAIL')},select:{id:true}})).id;
 		const info=await adminPage.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'REQUEST_INFO',note:'Please clarify this simulated request.'}});
@@ -1849,7 +1879,7 @@ test('simulated BTC address is display-only and acknowledged before a deposit en
 		await expect(page.getByText(address,{exact:true})).toBeVisible();
 		await expect(page.getByText(/Do not send cryptocurrency based on this screen/)).toBeVisible();
 		const acknowledgement=page.getByRole('button',{name:'Skip – I already have the address'});
-		const submit=page.getByRole('button',{name:'Submit simulated deposit request'});
+		const submit=page.getByRole('button',{name:'Submit deposit request'});
 		await expect(submit).toBeDisabled();
 		await acknowledgement.click();
 		await expect(acknowledgement).toHaveAttribute('aria-pressed','true');
@@ -1879,16 +1909,16 @@ test('display currency preference persists across account and activity surfaces 
 	const updated=await page.request.patch('/api/currency-preference',{data:{currency:'GBP'}});
 	expect(updated.ok()).toBe(true);
 	expect((await updated.json()).currency).toBe('GBP');
-	const unavailableRate=await page.request.get('/api/currency-rates?to=GBP');
-	expect(unavailableRate.ok()).toBe(true);
-	expect((await unavailableRate.json()).status).toBe('UNAVAILABLE');
+	const fallbackRate=await page.request.get('/api/currency-rates?to=GBP');
+	expect(fallbackRate.ok()).toBe(true);
+	expect((await fallbackRate.json()).status).toBe('INTERNAL');
 	await page.goto('/portfolio');
 	await expect(page.getByLabel('Preferred display currency')).toHaveValue('GBP');
 	await page.getByLabel('Preferred display currency').selectOption('EUR');
 	await expect.poll(async()=>(await page.request.get('/api/currency-preference').then(response=>response.json())).currency).toBe('EUR');
 	await page.goto('/dashboard');
 	await expect(page.getByLabel('Preferred display currency')).toHaveValue('EUR');
-	await expect(page.getByText(/A current configured exchange rate is unavailable/)).toBeVisible();
+	await expect(page.getByText(/Internal reference rate/)).toBeVisible();
 	await page.goto('/activity');
 	await expect(page.getByLabel('Preferred display currency')).toHaveValue('EUR');
 	await page.goto('/wallet/transactions');
@@ -1965,7 +1995,7 @@ test('REAL internal transaction detail preserves pending review status',async({p
 	await selectAccountMode(page,'REAL');
 	const response=await page.goto(`/wallet/transactions/${fixture('REAL_DETAIL_ID')}`);
 	expect(response?.status()).toBe(200);
-	await expect(page.getByRole('heading',{name:'Simulated deposit request'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Deposit request'})).toBeVisible();
 	await expect(page.getByText(/No payment processor, broker, bank, or crypto network is contacted/i)).toBeVisible();
 	await expect(page.getByText(/This request awaits administrator review/i)).toBeVisible();
 	await expect(page.getByText(/Attached to simulated request; not payment verification/i)).toBeVisible();

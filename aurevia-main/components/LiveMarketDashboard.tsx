@@ -129,12 +129,12 @@ function LiveMarketDashboardContent(){
 
   return <><Nav/><main className="live-market-page">
     <div className="live-market-topline">
-      <div className="live-market-heading"><span>GLOBAL MARKETS <i/> {activeQuote?.isStale?'LAST SAVED QUOTE':activeQuote?'PROVIDER DATA':'DATA UNAVAILABLE'}</span><h1>Markets</h1><p>Market prices and charts from {activeQuote?.source||'an available provider'}.</p></div>
-      <div className={`live-source-status ${activeQuote?.isStale||streamStatus!=='connected'?'is-stale':''} ${streamStatus==='connected'?'is-live':''}`}><span className="live-status-dot"/>{streamStatus==='connected'?'LIVE STREAM':'STREAM OFFLINE'} · {activeQuote?.source||'Provider unavailable'} <small>{streamStatus==='connected'?`Real-time updates · ${formatTime(activeQuote?.updatedAt||new Date().toISOString())}`:activeQuote?.isStale?`Last saved quote · ${formatTime(activeQuote.updatedAt)}`:activeQuote?`Updated ${formatTime(activeQuote.updatedAt)}`:'Waiting for quotes'}</small></div>
+      <div className="live-market-heading"><span>GLOBAL MARKETS <i/> {activeQuote?.source==='Finnhub'?'FINNHUB DATA':'INTERNAL PAPER MARKET'}</span><h1>Markets</h1><p>Finnhub data is used when available; internal reference prices keep this market view available otherwise.</p></div>
+      <div className={`live-source-status ${activeQuote?.isStale?'is-stale':''} ${activeQuote?.source==='Finnhub'?'is-live':''}`}><span className="live-status-dot"/>{`Market data: ${activeQuote?.source==='Finnhub'?'Live':'Internal'}`} <small>{activeQuote?.source==='Finnhub'?`Finnhub quote · ${formatTime(activeQuote.updatedAt)}`:activeQuote?.isStale?`Last internal quote · ${formatTime(activeQuote.updatedAt)}`:activeQuote?`Internal reference data · ${formatTime(activeQuote.updatedAt)}`:'Internal reference data loading'} · {streamStatus==='connected'?'Update feed connected':'Update feed reconnecting'}</small></div>
     </div>
 
     <section className="live-ticker" aria-label="Market ticker">
-      <div className="live-ticker-label"><Activity size={14}/> LIVE</div>
+      <div className="live-ticker-label"><Activity size={14}/> MARKET DATA</div>
       <div className="live-ticker-track">
         {TICKER_SYMBOLS.map(id=>{
           const item=batchQuotes.get(id);
@@ -189,7 +189,7 @@ function LiveMarketDashboardContent(){
             {activeQuote&&<span className={`live-change ${tone(activeQuote.changePercent)}`}><b>{activeQuote.change>=0?'+':''}{formatPrice(activeQuote.change,selectedAsset.currency,selectedAsset.type==='FOREX')}</b><b>({formatPercent(activeQuote.changePercent)})</b></span>}
             <span className="live-market-open-state"><i/> {marketOpenLabel(selectedAsset.type)}</span>
           </div>
-          <div className="live-chart-metadata"><span>{activeQuote?.isStale?'Last quote · STALE': 'Last quote'} {activeQuote?formatTime(activeQuote.updatedAt):'—'}</span><span>Source <b>{activeQuote?.source||historyQuery.data?.source||'Unavailable'}</b></span><button type="button" className="live-refresh-button" aria-label="Refresh quotes" onClick={()=>{void selectedQuery.refetch();void batchQuery.refetch();void historyQuery.refetch()}}><RefreshCw size={13} className={selectedQuery.isFetching?'is-spinning':''}/> Refresh</button></div>
+          <div className="live-chart-metadata"><span>{activeQuote?.isStale?'Last quote · STALE': 'Last quote'} {activeQuote?formatTime(activeQuote.updatedAt):'—'}</span><span>Quote source <b>{activeQuote?.source||'Unavailable'}</b></span><span>Chart source <b>{historyQuery.data?.source||'Loading'}</b></span><button type="button" className="live-refresh-button" aria-label="Refresh quotes" onClick={()=>{void selectedQuery.refetch();void batchQuery.refetch();void historyQuery.refetch()}}><RefreshCw size={13} className={selectedQuery.isFetching?'is-spinning':''}/> Refresh</button></div>
           <div className="live-timeframes" role="group" aria-label="Chart interval">{TIMEFRAMES.map(item=><button type="button" key={item.id} className={timeframe===item.id?'is-active':''} aria-pressed={timeframe===item.id} onClick={()=>setTimeframe(item.id)}>{item.label}</button>)}</div>
           <LivePriceChart candles={historyQuery.data?.candles||[]} quote={activeQuote} timeframe={timeframe} loading={historyQuery.isLoading} error={historyQuery.error instanceof Error?historyQuery.error.message:''}/>
           {error&&<div className="live-data-alert" role="alert">The chart could not be updated. Available historical data is preserved. <button type="button" onClick={()=>void historyQuery.refetch()}>Retry</button></div>}
@@ -204,7 +204,7 @@ function LiveMarketDashboardContent(){
           <div className="live-performance">{performance.map(metric=><div key={metric.label}><span>{metric.label}</span><b className={metric.value===null?'':tone(metric.value)}>{metric.value===null?'—':formatPercent(metric.value)}</b></div>)}</div>
         </div>
 
-        <section className="live-comparison-section"><div className="live-section-title"><div><span>MARKET BENCHMARKS</span><h2>Quick comparison</h2></div><span className="live-source-note">Daily change · live data</span></div><div className="live-comparison-grid">{COMPARISON_SYMBOLS.map(id=>{const quote=batchQuotes.get(id);const asset=getMarketAsset(id)!;return <button type="button" className={`live-comparison-card ${selectedAsset.id===id?'is-active':''}`} key={id} onClick={()=>selectSymbol(id)}><span>{id}</span><small>{asset.name}</small><strong className={isQuote(quote)?tone(quote.changePercent):''}>{isQuote(quote)?formatPercent(quote.changePercent):'—'}</strong><em>{isQuote(quote)?formatPrice(quote.price,quote.asset.currency):quote?'Unavailable':'Updating'}</em></button>})}</div></section>
+        <section className="live-comparison-section"><div className="live-section-title"><div><span>MARKET BENCHMARKS</span><h2>Quick comparison</h2></div><span className="live-source-note">Daily change · selected data source</span></div><div className="live-comparison-grid">{COMPARISON_SYMBOLS.map(id=>{const quote=batchQuotes.get(id);const asset=getMarketAsset(id)!;return <button type="button" className={`live-comparison-card ${selectedAsset.id===id?'is-active':''}`} key={id} onClick={()=>selectSymbol(id)}><span>{id}</span><small>{asset.name}</small><strong className={isQuote(quote)?tone(quote.changePercent):''}>{isQuote(quote)?formatPercent(quote.changePercent):'—'}</strong><em>{isQuote(quote)?formatPrice(quote.price,quote.asset.currency):quote?'Unavailable':'Updating'}</em></button>})}</div></section>
       </section>
 
       <aside className="live-right-panel">
@@ -215,8 +215,8 @@ function LiveMarketDashboardContent(){
           <div className="live-key-row"><span>Type</span><b>{marketTypeLabel(selectedAsset.type)}</b></div>
           <div className="live-key-row"><span>Day range</span><b>{activeQuote?.dayLow!==null&&activeQuote?.dayLow!==undefined&&activeQuote.dayHigh!==null?`${formatPrice(activeQuote.dayLow,selectedAsset.currency)} – ${formatPrice(activeQuote.dayHigh,selectedAsset.currency)}`:'—'}</b></div>
         </section>
-        <section className="live-right-card live-provider-card"><span className="live-provider-mark">{activeQuote?.source==='Finnhub'?'F':'Y!'}</span><div><b>{activeQuote?.source||'Provider unavailable'}</b><small>Quote provider</small></div><span className="live-provider-dot" title={activeQuote?.source?'Provider returned a quote':'No quote available'}/></section>
-        <p className="live-disclaimer">{activeQuote?`Data is provided by ${activeQuote.source} and may be delayed.`:'Quotes are currently unavailable.'} This is not financial advice or a stock execution connection.</p>
+        <section className="live-right-card live-provider-card"><span className="live-provider-mark">{activeQuote?.source==='Finnhub'?'F':'A'}</span><div><b>{`Market data: ${activeQuote?.source==='Finnhub'?'Live':'Internal'}`}</b><small>{activeQuote?.source||'Aurevia Internal'}</small></div><span className="live-provider-dot" title={activeQuote?.source==='Finnhub'?'Finnhub returned a quote':'Internal paper-market reference data'}/></section>
+        <p className="live-disclaimer">{activeQuote?.source==='Finnhub'?'The current quote is from Finnhub and may be delayed.':'The current quote is an Aurevia Internal paper-market reference.'} {historyQuery.data?.source==='Finnhub'?'Chart history is from Finnhub.':historyQuery.data?.source==='Aurevia Internal'?'Chart history is internally generated for this paper-market view.':'Chart history is loading.'} This view is informational and is not connected to external order execution.</p>
       </aside>
     </div>
   </main></>;

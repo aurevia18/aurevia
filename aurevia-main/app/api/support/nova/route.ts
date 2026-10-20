@@ -6,7 +6,8 @@ import {authOptions} from '@/lib/auth-options';
 import {db} from '@/lib/db';
 import {balance,reservedWithdrawalAmount} from '@/lib/ledger';
 import {getAccountTier} from '@/lib/production-policy';
-import {getMarketQuote,MARKET_ASSETS} from '@/lib/live-market';
+import {MARKET_ASSETS} from '@/lib/live-market';
+import {getMarketQuoteWithFallback} from '@/lib/market-data-service';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getSupportContact} from '@/lib/config';
 import {calculateTradePlan,formatTradePlan,hasDemoOrderIntent,missingTradePlanInputs,parseDemoOrderIntent,parseTradePlan,requestsUnsupportedOrderType} from '@/lib/nova-assistant';
@@ -99,10 +100,9 @@ export async function POST(request:Request){
 		if(asset&&/\b(price|quote|market|movement|trading at|value|ticker)\b/i.test(input.question)){
 			try{
 				const config=getServerConfiguration();
-				const alpacaData=config.execution.alpacaProvider.toLowerCase()==='alpaca'?{apiKey:config.execution.alpacaTradingApiKey,apiSecret:config.execution.alpacaTradingApiSecret}:undefined;
-				const quote=await getMarketQuote(asset,config.marketData.finnhubApiKey,alpacaData);
+				const quote=await getMarketQuoteWithFallback(asset,config.marketData.finnhubApiKey);
 				const ageMinutes=Math.max(0,Math.round((Date.now()-Date.parse(quote.updatedAt))/60_000));
-				const freshness=quote.isStale||ageMinutes>5?'STALE PROVIDER DATA':'PROVIDER DATA · freshness not independently verified';
+				const freshness=quote.source==='Finnhub'?(quote.isStale||ageMinutes>5?'STALE FINNHUB DATA':'FINNHUB DATA'):'INTERNAL PAPER-MARKET DATA';
 				quoteAnswer=`${asset.name} (${asset.id}): ${quote.price} ${asset.currency}; daily change ${quote.change} (${quote.changePercent}%). Source: ${quote.source}. Timestamp: ${quote.updatedAt}. Status: ${freshness}. This is market information, not a trade recommendation.`;
 				quoteAudit={symbol:asset.id,source:quote.source,freshness:quote.isStale?'STALE':'UNVERIFIED',updatedAt:quote.updatedAt,externalAction:false,providerResult:'quote-returned'};
 			}catch{

@@ -1,0 +1,84 @@
+import {db} from '@/lib/db';
+import type {LiveMarketAsset,MarketCandle,MarketQuote,TimeframeId} from '@/lib/live-market';
+
+const referencePrices:Record<string,number>={
+	DJI:42_000,SPX:5_800,NASDAQ:18_500,SP100:3_400,NDX:20_000,DAX:19_000,IBEX:11_800,
+	NIKKEI:39_000,MERV:1_900_000,EURGBP:0.84,BTC:95_000,AAPL:230,MSFT:510,NVDA:140,
+	AMZN:220,GOOGL:190,TSLA:340,
+};
+
+const instrumentSymbols:Record<string,string[]>={
+	BTC:['BTC/USD'],EURGBP:['EUR/GBP'],DJI:['DJI'],SPX:['SPX'],NASDAQ:['NASDAQ'],SP100:['SP100'],NDX:['NDX'],
+	DAX:['DAX'],IBEX:['IBEX'],NIKKEI:['NIKKEI'],MERV:['MERV'],AAPL:['AAPL'],MSFT:['MSFT'],
+	NVDA:['NVDA'],AMZN:['AMZN'],GOOGL:['GOOGL'],TSLA:['TSLA'],
+};
+
+const timeframeDays:Record<TimeframeId,number>={'1d':1,'5d':5,'1m':30,'3m':90,'ytd':365,'1y':365,'3y':1095,'5y':1825,'max':3650};
+const timeframeIntervals:Record<TimeframeId,string>={'1d':'30m','5d':'2h','1m':'12h','3m':'1d','ytd':'1d','1y':'1d','3y':'1w','5y':'1w','max':'1mo'};
+
+function hash(value:string){
+	let result=2166136261;
+	for(const character of value){result^=character.charCodeAt(0);result=Math.imul(result,16777619);}
+	return result>>>0;
+}
+
+function internalPriceAt(asset:LiveMarketAsset,base:number,time:number){
+	const phase=(hash(asset.id)%10_000)/10_000*Math.PI*2;
+	const shortWave=Math.sin(time/1_800_000+phase)*0.0015;
+	const longWave=Math.sin(time/43_200_000+phase/2)*0.004;
+	return base*(1+shortWave+longWave);
+}
+
+async function currentInternalPrice(asset:LiveMarketAsset,now:number){
+	const symbols=instrumentSymbols[asset.id]||[];
+	const instrument=symbols.length?await db.instrument.findFirst({
+		where:{symbol:{in:symbols},enabled:true},
+		orderBy:{updatedAt:'desc'},
+		select:{id:true,price:true},
+	}):null;
+	const reference=referencePrices[asset.id];
+	const dayStart=Math.floor(now/86_400_000)*86_400_000;
+	if(!instrument)return {price:internalPriceAt(asset,reference,now),reference,open:internalPriceAt(asset,reference,dayStart)};
+	const price=Number(instrument.price);
+	if(!Number.isFinite(price)||price<=0)throw new Error(`Internal market price is unavailable for ${asset.id}.`);
+	const dayOpen=await db.candle.findFirst({
+		where:{instrumentId:instrument.id,ts:{gte:new Date(dayStart)}},
+		orderBy:{ts:'asc'},
+		select:{open:true},
+	});
+	return {price,reference:price,open:dayOpen?Number(dayOpen.open):price};
+}
+
+export async function getInternalMarketQuote(asset:LiveMarketAsset):Promise<MarketQuote>{
+	const now=Date.now();
+	const current=await currentInternalPrice(asset,now);
+	const {price,reference}=current;
+	const previousClose=current.open;
+	const change=price-previousClose;
+	const sparkline=Array.from({length:28},(_,index)=>internalPriceAt(asset,reference,now-(27-index)*300_000));
+	const recent=[...sparkline.slice(-12),price];
+	return {
+		asset,price,change,changePercent:change/previousClose*100,previousClose,
+		open:current.open,
+		volume:null,
+		dayLow:Math.min(...recent),dayHigh:Math.max(...recent),fiftyTwoWeekLow:reference*0.82,
+		fiftyTwoWeekHigh:reference*1.18,updatedAt:new Date(now).toISOString(),isStale:false,
+		sparkline,source:'Aurevia Internal',
+	};
+}
+
+export async function getInternalMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId){
+	const quote=await getInternalMarketQuote(asset);
+	const now=Math.floor(Date.now()/1000);
+	const span=timeframeDays[timeframe]*86_400;
+	const step=span/59;
+	const candles:MarketCandle[]=Array.from({length:60},(_,index)=>{
+		const time=Math.floor(now-span+step*index);
+		const center=internalPriceAt(asset,quote.price,(now-span+step*index)*1000);
+		const next=internalPriceAt(asset,quote.price,(now-span+step*(index+1))*1000);
+		const open=index?internalPriceAt(asset,quote.price,(now-span+step*(index-1))*1000):center;
+		const close=index===59?quote.price:next;
+		return {time,open,high:Math.max(open,close)*1.0008,low:Math.min(open,close)*0.9992,close,volume:null};
+	});
+	return {quote,candles,timeframe,interval:timeframeIntervals[timeframe],source:'Aurevia Internal'};
+}
