@@ -5,7 +5,7 @@ import {writeFile} from 'node:fs/promises';
 import {loadEnvConfig} from '@next/env';
 import {AccountMode,PrismaClient,Role,UserStatus,NotificationType,FundingStatus,FundingType,KycStatus} from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import {initializeDemoAccount} from '../../lib/ledger';
+import {initializePaperAccount} from '../../lib/ledger';
 
 export default async function globalSetup(){
 	const configuredE2eDatabaseUrl=process.env.AUREVIA_E2E_DATABASE_URL;
@@ -86,10 +86,10 @@ export default async function globalSetup(){
 		const btcUsd=await db.instrument.upsert({where:{symbol:'BTC/USD'},update:{},create:{symbol:'BTC/USD',name:'E2E simulated BTC/USD',baseAsset:'BTC',quoteAsset:'USD',price:92500,enabled:true}});
 		instrumentIds.push(btcUsd.id);
 		await db.$transaction(async tx=>{
-			await initializeDemoAccount(tx,userId);
-			await initializeDemoAccount(tx,legacyUserId);
-			await initializeDemoAccount(tx,investorId);
-			await initializeDemoAccount(tx,deletionUserId);
+			for(const id of [userId,legacyUserId,investorId,deletionUserId]){
+				await initializePaperAccount(tx,id,AccountMode.DEMO);
+				await initializePaperAccount(tx,id,AccountMode.REAL);
+			}
 			await tx.kycProfile.create({data:{userId:deletionUserId,legalName:'Temporary Deletion User',dob:new Date('1990-01-01'),address:'Private Test Address',idType:'PASSPORT',idNumber:`DELETE-${runId}`,submittedAt:new Date()}});
 			await tx.kycProfile.create({data:{userId:investorId,legalName:'Investment E2E User',dob:new Date('1990-01-01'),address:'123 Test Street',idType:'PASSPORT',idNumber:`E2E-${runId}`,submittedAt:new Date()}});
 			const document=await tx.kycDocument.create({data:{userId:investorId,kind:'IDENTITY_DOCUMENT',filename:'e2e-identity.pdf',storageKey:`${investorId}/${randomUUID()}.pdf`,mimeType:'application/pdf',size:128,status:'APPROVED'}});

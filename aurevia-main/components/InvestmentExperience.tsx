@@ -1,6 +1,7 @@
 'use client';
 
-import {FormEvent,useCallback,useEffect,useMemo,useState} from 'react';
+import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {useSession} from 'next-auth/react';
 import {ArrowUpRight,RefreshCw,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
@@ -15,6 +16,7 @@ function statusText(value:string){return value.replaceAll('_',' ');}
 function dateText(value:string|null,notSet:string){return value?new Date(value).toLocaleDateString():notSet;}
 
 export default function InvestmentExperience(){
+ const {data:session}=useSession();
  const {translate}=useLocale();
  const [data,setData]=useState<Payload|null>(null);
  const [amounts,setAmounts]=useState<Record<string,string>>({});
@@ -25,16 +27,18 @@ export default function InvestmentExperience(){
  const [busy,setBusy]=useState('');
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
+ const latestRequest=useRef(0);
 
  const load=useCallback(async(showLoading=false)=>{
+  const requestId=++latestRequest.current;
   if(showLoading)setLoading(true);
   try{
    const response=await fetch('/api/investments',{cache:'no-store'});
    const result=await response.json();
    if(!response.ok)throw new Error(result.error||translate('unableToLoadInvestments'));
-   setData(result);setError('');
-  }catch(exception){setError(exception instanceof Error?exception.message:translate('unableToLoadInvestments'));}
-  finally{if(showLoading)setLoading(false);}
+   if(requestId===latestRequest.current){setData(result);setError('');}
+  }catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:translate('unableToLoadInvestments'));}
+  finally{if(requestId===latestRequest.current)setLoading(false);}
  },[translate]);
  const categories=useMemo(()=>[...new Set(data?.opportunities.map(item=>item.category)||[])].sort(),[data?.opportunities]);
  const visibleOpportunities=useMemo(()=>{
@@ -43,13 +47,14 @@ export default function InvestmentExperience(){
  },[category,data?.opportunities,search]);
 
  useEffect(()=>{
+  setData(null);setAmounts({});setConfirmOpportunityId('');setError('');setNotice('');
   void load(true);
   const refreshWhenActive=()=>{if(document.visibilityState==='visible')void load();};
   const timer=window.setInterval(refreshWhenActive,5_000);
   window.addEventListener('focus',refreshWhenActive);
   document.addEventListener('visibilitychange',refreshWhenActive);
   return ()=>{window.clearInterval(timer);window.removeEventListener('focus',refreshWhenActive);document.removeEventListener('visibilitychange',refreshWhenActive);};
- },[load]);
+ },[load,session?.user?.accountMode]);
 
  function reviewAllocation(event:FormEvent<HTMLFormElement>,opportunity:Opportunity){
   event.preventDefault();if(busy)return;

@@ -4,6 +4,7 @@ import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {createPrivateObjectKey,createPrivateSignedUrl,deletePrivateObject,hasMatchingFileExtension,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
+import {isProfileLocked} from '@/lib/profile-lock';
 
 const maxBytes=2*1024*1024;
 function avatarMime(bytes:Buffer):'image/png'|'image/jpeg'|'image/webp'|null{
@@ -21,6 +22,7 @@ export async function GET(){
 		return NextResponse.json({url:await createPrivateSignedUrl('avatar',user.id,profile.avatarKey)},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		return NextResponse.json({error:'Profile photo is unavailable.'},{status:503});
 	}
@@ -42,9 +44,12 @@ export async function POST(request:Request){
 		if(!contentType||contentType!==file.type||!hasMatchingFileExtension(file.name,contentType))return NextResponse.json({error:'Profile photos must be valid PNG, JPEG, or WebP images with a matching extension.'},{status:415});
 		const avatarKey=createPrivateObjectKey('avatar',user.id,contentType);
 		newKey=avatarKey;
-		const previous=await db.user.findUnique({where:{id:user.id},select:{avatarKey:true}});
+		const previous=await db.user.findUnique({where:{id:user.id},select:{avatarKey:true,verifiedAt:true,kycStatus:true}});
+		if(previous?.kycStatus==='APPROVED'&&isProfileLocked(previous.verifiedAt))return NextResponse.json({error:'Verified profile details are locked. Contact support for an account change.'},{status:423});
 		await uploadPrivateObject('avatar',user.id,avatarKey,bytes,contentType);
 		await db.$transaction(async tx=>{
+			const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{verifiedAt:true,kycStatus:true}});
+			if(current.kycStatus==='APPROVED'&&isProfileLocked(current.verifiedAt))throw new Error('PROFILE_LOCKED');
 			const saved=await tx.user.updateMany({where:{id:user.id,avatarKey:previous?.avatarKey??null},data:{avatarKey}});
 			if(saved.count!==1)throw new Error('AVATAR_CHANGED');
 			await tx.auditLog.create({data:{actorId:user.id,action:'PROFILE_AVATAR_UPDATED',entity:'USER',entityId:user.id,metadata:{contentType,size:bytes.length}}});
@@ -55,6 +60,8 @@ export async function POST(request:Request){
 	}catch(error){
 		if(newKey&&ownerId)await deletePrivateObject('avatar',ownerId,newKey);
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+		if(error instanceof Error&&error.message==='PROFILE_LOCKED')return NextResponse.json({error:'Verified profile details are locked. Contact support for an account change.'},{status:423});
 		if(error instanceof Error&&error.message==='AVATAR_CHANGED')return NextResponse.json({error:'The profile photo changed. Please retry.'},{status:409});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		return NextResponse.json({error:'Profile photo upload is unavailable.'},{status:503});

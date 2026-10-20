@@ -56,15 +56,15 @@ export async function executeOrderTx(tx:Prisma.TransactionClient,orderId:string,
   const basisReduction=existing.margin.mul(quantity).div(existing.quantity);
   await tx.position.update({where:{id:existing.id},data:remaining.isZero()?{status:'CLOSED',closedAt:new Date(),margin:0,realizedPnl:{increment:pnl}}:{quantity:remaining,margin:existing.margin.minus(basisReduction),realizedPnl:{increment:pnl}}});
  }
- await tx.execution.create({data:{orderId:order.id,quantity,price:fillPrice,fee}});
+ await tx.execution.create({data:{orderId:order.id,accountMode:order.accountMode,quantity,price:fillPrice,fee}});
  await tx.order.update({where:{id:order.id},data:{filledQuantity:{increment:quantity},averageFillPrice:fillPrice,fee:{increment:fee},status:OrderStatus.FILLED}});
  await tx.auditLog.create({data:{actorId:order.userId,action:`${order.accountMode==='DEMO'?'DEMO':'REAL_SIMULATED'}_ORDER_${order.side}_FILLED`,entity:'ORDER',entityId:order.id,metadata:{oldState:OrderStatus.OPEN,newState:OrderStatus.FILLED,accountMode:order.accountMode,simulated:true,instrument:order.instrument.symbol,quantity:quantity.toString(),fillPrice:fillPrice.toString(),fee:fee.toString()}}});
  await createNotification(tx,{userId:order.userId,type:NotificationType.TRADE,title:`${order.accountMode} simulated order filled`,message:`Your ${order.side.toLowerCase()} order for ${order.instrument.symbol} filled ${quantity.toString()} at ${fillPrice.toString()} using simulated trading. No external order was placed.`,dedupeKey:`order:${order.id}:filled`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
  return tx.order.findUnique({where:{id:order.id},include:{executions:true,instrument:true}});
 }
 
-export async function closeSimulatedPositionTx(tx:Prisma.TransactionClient,userId:string,positionId:string,actorId=userId){
- const position=await tx.position.findFirst({where:{id:positionId,userId,status:'OPEN'},include:{instrument:true}});
+export async function closeSimulatedPositionTx(tx:Prisma.TransactionClient,userId:string,positionId:string,actorId=userId,accountMode?:AccountMode){
+ const position=await tx.position.findFirst({where:{id:positionId,userId,status:'OPEN',...(accountMode?{accountMode}:{})},include:{instrument:true}});
  if(!position)throw new Error('POSITION_NOT_FOUND');
  const price=position.instrument.price;
  if(price.lte(0))throw new Error('INVALID_PRICE');
@@ -100,7 +100,7 @@ export async function closeSimulatedPositionTx(tx:Prisma.TransactionClient,userI
   fee,
   idempotencyKey:`POSITION_CLOSE:${position.id}:${randomUUID()}`,
  }});
- await tx.execution.create({data:{orderId:closingOrder.id,quantity:position.quantity,price,fee}});
+ await tx.execution.create({data:{orderId:closingOrder.id,accountMode:position.accountMode,quantity:position.quantity,price,fee}});
  const closed=await tx.position.update({where:{id:position.id},data:{status:'CLOSED',closedAt:new Date(),margin:0,realizedPnl:{increment:pnl}}});
  await tx.auditLog.create({data:{actorId,action:`${position.accountMode}_SIMULATED_POSITION_${actorId===userId?'CLOSED':'ADMIN_CLOSED'}`,entity:'POSITION',entityId:position.id,metadata:{accountMode:position.accountMode,simulated:true,symbol:position.instrument.symbol,quantity:position.quantity.toString(),exitPrice:price.toString(),realizedPnl:pnl.toString(),closingOrderId:closingOrder.id}}});
  await tx.auditLog.create({data:{actorId,action:`${position.accountMode==='DEMO'?'DEMO':'REAL_SIMULATED'}_ORDER_${closingOrder.side}_FILLED`,entity:'ORDER',entityId:closingOrder.id,metadata:{oldState:OrderStatus.OPEN,newState:OrderStatus.FILLED,accountMode:position.accountMode,simulated:true,positionId:position.id,instrument:position.instrument.symbol,quantity:position.quantity.toString(),fillPrice:price.toString(),fee:fee.toString()}}});
@@ -115,6 +115,9 @@ export async function placeOrder(userId:string,accountMode:AccountMode,input:Pla
  if(input.type===OrderType.LIMIT&&(!Number.isFinite(input.price)||Number(input.price)<=0))throw new Error('LIMIT_PRICE_REQUIRED');
  if(input.type===OrderType.STOP&&(!Number.isFinite(input.stopPrice)||Number(input.stopPrice)<=0))throw new Error('STOP_PRICE_REQUIRED');
  const create=()=>db.$transaction(async tx=>{
+   const activeUser=await tx.user.findUnique({where:{id:userId},select:{accountMode:true,status:true,role:true}});
+   if(!activeUser||activeUser.status!=='ACTIVE'||activeUser.role!=='USER')throw new Error('ORDER_ACCOUNT_UNAVAILABLE');
+   if(activeUser.accountMode!==accountMode)throw new Error('ACCOUNT_MODE_CHANGED');
    const prior=await tx.order.findUnique({where:{idempotencyKey},include:{executions:true,instrument:true}});
    if(prior){if(!matchesOrder(prior,userId,accountMode,input))throw new Error('IDEMPOTENCY_KEY_REUSED');return prior;}
    const inst=await tx.instrument.findUnique({where:{id:input.instrumentId}}); if(!inst||!inst.enabled)throw new Error('INSTRUMENT_UNAVAILABLE');
@@ -143,7 +146,7 @@ export async function placeOrder(userId:string,accountMode:AccountMode,input:Pla
 }
 
 export async function processOpenOrders(){
- const orders=await db.order.findMany({where:{status:OrderStatus.OPEN,accountMode:AccountMode.DEMO},include:{instrument:true},take:500,orderBy:{createdAt:'asc'}});
+ const orders=await db.order.findMany({where:{status:OrderStatus.OPEN,accountMode:{in:[AccountMode.DEMO,AccountMode.REAL]}},include:{instrument:true},take:500,orderBy:{createdAt:'asc'}});
  for(const o of orders){
    const p=Number(o.instrument.price); const hit=executable(o.type,o.side,p,o.price===null?undefined:Number(o.price),o.stopPrice===null?undefined:Number(o.stopPrice));
    if(!hit)continue;

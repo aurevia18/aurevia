@@ -4,8 +4,8 @@ import {DEMO_STARTING_BALANCE} from '../lib/ledger';
 import {assertKycSubmissionAllowed,getAccountTier,validateDepositApproval,validateTierThreeApproval,validateTierUpgradeApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
 
 describe('production account policy',()=>{
-  it('starts demo accounts with exactly 5,000 simulated USD',()=>{
-    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('5000.00');
+  it('starts paper accounts with exactly 100,000 simulated USD',()=>{
+    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('100000.00');
   });
 
   it('keeps demo and real account states isolated',()=>{

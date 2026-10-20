@@ -11,7 +11,9 @@ const closeSchema=z.object({positionId:z.string().min(1)});
 export async function GET(){
  try{
   const user=await requireUser();
-  const positions=await db.position.findMany({where:{userId:user.id,accountMode:user.accountMode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'desc'}});
+  const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+  if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
+  const positions=await db.position.findMany({where:{userId:user.id,accountMode:currentUser.accountMode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'desc'}});
   return NextResponse.json(jsonSafe(positions.map(position=>{
    const currentPrice=position.instrument.price;
    const marketValue=currentPrice.mul(position.quantity);
@@ -28,7 +30,9 @@ export async function POST(request:Request){
  try{
   const user=await requireUser();
   const {positionId}=closeSchema.parse(await request.json());
-    const closed=await db.$transaction(tx=>closeSimulatedPositionTx(tx,user.id,positionId),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
+  const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+  if(!currentUser||currentUser.status!=='ACTIVE')return NextResponse.json({error:'This account is unavailable.'},{status:403});
+  const closed=await db.$transaction(tx=>closeSimulatedPositionTx(tx,user.id,positionId,user.id,currentUser.accountMode),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
   return NextResponse.json(jsonSafe(closed));
  }catch(error){
   if(error instanceof ZodError)return NextResponse.json({error:'Invalid position.'},{status:400});

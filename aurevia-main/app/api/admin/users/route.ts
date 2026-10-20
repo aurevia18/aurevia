@@ -9,7 +9,6 @@ import {getServerConfiguration} from '@/lib/config/env';
 const schema=z.object({
   userId:z.string(),
   status:z.enum(['ACTIVE','FROZEN','DELETED']).optional(),
-  role:z.enum(['USER','ADMIN']).optional(),
   kycStatus:z.enum(['PENDING','APPROVED','REJECTED','NEEDS_CHANGES']).optional(),
   depositEnabled:z.boolean().optional(),
   withdrawalEnabled:z.boolean().optional(),
@@ -43,22 +42,24 @@ export async function GET(request:Request){
 export async function PATCH(req:Request){
   try{
     const admin=await requireAdmin();
-    const input=schema.parse(await req.json());
+    const body:unknown=await req.json();
+    if(body&&typeof body==='object'&&'role' in body)return NextResponse.json({error:'Administrator and customer roles are managed separately.'},{status:409});
+    const input=schema.parse(body);
     const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
-    if(input.userId===admin.id&&(input.status==='FROZEN'||input.role==='USER'))throw new Error('CANNOT_DISABLE_CURRENT_ADMIN');
+    if(input.userId===admin.id&&input.status==='FROZEN')throw new Error('CANNOT_DISABLE_CURRENT_ADMIN');
     const updated=await db.$transaction(async tx=>{
       const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{email:true,role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
       if(input.status==='DELETED'&&(current.role==='ADMIN'||current.status==='CLOSED'))throw new Error('ACCOUNT_CANNOT_BE_SOFT_DELETED');
       if(current.status==='DELETED'&&input.status!=='ACTIVE')throw new Error('DELETED_ACCOUNT_MUST_BE_RESTORED');
       if(configuredAdminEmail&&current.email.toLowerCase()===configuredAdminEmail)throw new Error('ADMIN_ACCOUNT_ISOLATED');
-      const removesActiveAdmin=current.role==='ADMIN'&&current.status==='ACTIVE'&&(input.role==='USER'||input.status==='FROZEN');
+      const removesActiveAdmin=current.role==='ADMIN'&&current.status==='ACTIVE'&&input.status==='FROZEN';
       if(removesActiveAdmin&&await tx.user.count({where:{role:'ADMIN',status:'ACTIVE'}})<=1)throw new Error('LAST_ACTIVE_ADMIN_REQUIRED');
       const kycChanged=input.kycStatus!==undefined&&input.kycStatus!==current.kycStatus;
       const controlsChanged=(input.depositEnabled!==undefined&&input.depositEnabled!==current.depositEnabled)||(input.withdrawalEnabled!==undefined&&input.withdrawalEnabled!==current.withdrawalEnabled)||(input.accountRestricted!==undefined&&input.accountRestricted!==current.accountRestricted)||(input.restrictionReason!==undefined&&input.restrictionReason!==current.restrictionReason);
       if(input.kycStatus!==undefined&&!kycChanged)throw new Error('KYC_STATUS_UNCHANGED');
       if(input.kycStatus==='APPROVED'&&(!current.kyc?.submittedAt||!current.kycDocuments.length))throw new Error('APPROVED_IDENTITY_DOCUMENT_REQUIRED');
       const statusChanged=input.status!==undefined&&input.status!==current.status;
-      const user=await tx.user.update({where:{id:input.userId},data:{status:input.status,...(input.status==='DELETED'?{activeSessionId:null}:{}),role:input.role,kycStatus:input.kycStatus,...(input.kycStatus==='APPROVED'?{requiresRegistrationVerification:false,verifiedAt:new Date()}:input.kycStatus!==undefined?{verifiedAt:null}:{}),depositEnabled:input.depositEnabled,withdrawalEnabled:input.withdrawalEnabled,accountRestricted:input.accountRestricted,...(input.accountRestricted===false?{restrictionReason:null}:input.restrictionReason!==undefined?{restrictionReason:input.restrictionReason||null}:{})},select:{id:true,email:true,name:true,role:true,status:true,kycStatus:true,accountMode:true,createdAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true}});
+      const user=await tx.user.update({where:{id:input.userId},data:{status:input.status,...(input.status==='DELETED'?{activeSessionId:null}:{}),kycStatus:input.kycStatus,...(input.kycStatus==='APPROVED'?{requiresRegistrationVerification:false,verifiedAt:new Date()}:input.kycStatus!==undefined?{verifiedAt:null}:{}),depositEnabled:input.depositEnabled,withdrawalEnabled:input.withdrawalEnabled,accountRestricted:input.accountRestricted,...(input.accountRestricted===false?{restrictionReason:null}:input.restrictionReason!==undefined?{restrictionReason:input.restrictionReason||null}:{})},select:{id:true,email:true,name:true,role:true,status:true,kycStatus:true,accountMode:true,createdAt:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true}});
       if(kycChanged)await tx.kycProfile.updateMany({where:{userId:user.id},data:{reviewedAt:new Date(),reviewNote:input.reviewNote||null}});
       const accountStatusAction=input.status==='DELETED'?'USER_SOFT_DELETED':current.status==='DELETED'&&input.status==='ACTIVE'?'USER_RESTORED':null;
       await tx.auditLog.create({data:{actorId:admin.id,action:accountStatusAction||(kycChanged?`KYC_${input.kycStatus}`:controlsChanged?'USER_ACCOUNT_RESTRICTION':statusChanged?'USER_STATUS_UPDATE':'USER_UPDATE'),entity:'USER',entityId:user.id,metadata:{...input,reviewNote:input.reviewNote||null}}});

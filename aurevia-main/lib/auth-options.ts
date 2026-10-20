@@ -76,7 +76,7 @@ export const authOptions:NextAuthOptions={
           }
           if(account){
             if(account.role===Role.ADMIN)return account;
-            return tx.user.update({where:{id:account.id},data:{passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE,requiresRegistrationVerification:false}});
+            return null;
           }
           return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE}});
         },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});

@@ -11,15 +11,16 @@ export async function GET(){
 		await requireUser();
 		const addressSetting=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 		const address=addressSetting?.value.trim()||'';
+		const configuredAddress=address&&isBitcoinMainnetAddress(address)?address:null;
 		return NextResponse.json({
 			methods:[],
-			fundingStatus:'SIMULATED',
+			fundingStatus:configuredAddress?'MANUAL_REVIEW':'NOT_CONFIGURED',
 			simulationAvailable:true,
 			supportedCurrencies:SUPPORTED_CURRENCIES,
-			simulatedBitcoinAddress:address&&isBitcoinMainnetAddress(address)?address:null,
-			realFundingAvailable:true,
+			simulatedBitcoinAddress:configuredAddress,
+			realFundingAvailable:!!configuredAddress,
 			realWithdrawalAvailable:true,
-			manualDepositReviewAvailable:true,
+			manualDepositReviewAvailable:!!configuredAddress,
 			externalPaymentProcessing:'DISABLED',
 		},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

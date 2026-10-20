@@ -2,6 +2,7 @@
 
 import {FormEvent,useCallback,useEffect,useState} from 'react';
 import Link from 'next/link';
+import {useSession} from 'next-auth/react';
 import {Check,Clock3,LockKeyhole,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 
@@ -18,6 +19,7 @@ const tiers=[
 ];
 
 export default function AccountTierPanel(){
+	const {data:session}=useSession();
 	const [data,setData]=useState<TierData|null>(null);
 	const [message,setMessage]=useState('');
 	const [error,setError]=useState('');
@@ -46,7 +48,7 @@ export default function AccountTierPanel(){
 	const currentTier=data?.currentTier||1;
 	const latest=data?.requests[0];
 	return <><Nav/><main className="account-page">
-		<header className="account-heading"><div><span className="account-kicker">Account access</span><h1>Tier and verification</h1><p>Step-by-step reviews with no invented financial limits or automatic upgrades.</p></div><span className="status-pill mode-demo">{data?.tier||'ACCOUNT'} · CURRENT</span></header>
+		<header className="account-heading"><div><span className="account-kicker">Account access · {session?.user?.accountMode||'ACCOUNT'}</span><h1>Tier and verification</h1><p>Step-by-step reviews with no invented financial limits or automatic upgrades.</p></div><span className={`status-pill ${session?.user?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{data?.tier||'ACCOUNT'} · CURRENT</span></header>
 		{loading&&!data&&<p className="account-empty" role="status">Loading tier status…</p>}{error&&<p className="text-sm text-loss" role="alert">{error}</p>}{notice&&<p className="text-sm text-profit" role="status">{notice}</p>}
 		<div className="mt-4 grid gap-4 lg:grid-cols-3">{tiers.map(tier=>{const current=tier.number===currentTier;const complete=tier.number<currentTier;return <article className={`card p-5 ${current?'border-gold/50':''}`} key={tier.number}><div className="flex items-center justify-between"><h2 className="font-bold">TIER {tier.number}</h2>{current||complete?<ShieldCheck size={18} className="gold"/>:<Clock3 size={18} className="muted"/>}</div><h3 className="mt-4 text-lg font-semibold">{tier.title}</h3><p className="mt-2 text-sm leading-6 muted">{tier.description}</p><div className="mt-5 border-t border-white/10 pt-4"><span className="muted text-xs">Status</span><p className="mt-1 text-sm">{current?'Current tier':complete?'Reviewed and completed':'Available after the previous tier'}</p></div></article>})}</div>
 		<section className="account-panel card p-5 mt-4"><div className="account-panel-title"><div><h2>Requirements and progress</h2><p className="account-panel-subtitle">Admin decisions are recorded and never triggered by document submission alone.</p></div><LockKeyhole size={18} className="gold"/></div>

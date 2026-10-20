@@ -3,6 +3,7 @@
 import {useEffect,useState} from 'react';
 import Link from 'next/link';
 import {useParams} from 'next/navigation';
+import {useSession} from 'next-auth/react';
 import {ArrowLeft,Clock3,FileClock,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
@@ -37,9 +38,10 @@ const formatAmount=(value:string|number,currency:string)=>currency.toUpperCase()
 
 export default function TransactionDetailPage(){
 	const {id}=useParams<{id:string}>();
+	const {data:session}=useSession();
 	const [data,setData]=useState<Detail|null>(null);
 	const [error,setError]=useState('');
-	useEffect(()=>{let active=true;fetch(`/api/funding/${encodeURIComponent(id)}`).then(async response=>{const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction.');if(active)setData(result)}).catch(exception=>{if(active)setError(exception instanceof Error?exception.message:'Unable to load transaction.')});return()=>{active=false}},[id]);
+	useEffect(()=>{let active=true;setData(null);setError('');fetch(`/api/funding/${encodeURIComponent(id)}`).then(async response=>{const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction.');if(active)setData(result)}).catch(exception=>{if(active)setError(exception instanceof Error?exception.message:'Unable to load transaction.')});return()=>{active=false}},[id,session?.user?.accountMode]);
 	const transaction=data?.transaction;
 	const bitcoinDeposit=transaction?.accountMode==='REAL'&&transaction.currency.toUpperCase()==='BTC'&&transaction.type==='DEPOSIT';
 	const displayValues=transaction?.currency?.toUpperCase()==='USD'?[{label:'Amount requested',amount:String(transaction.amount)},...(transaction.creditedAmount!==null&&transaction.creditedAmount!==undefined?[{label:'Amount credited',amount:String(transaction.creditedAmount)}]:[])]:[];

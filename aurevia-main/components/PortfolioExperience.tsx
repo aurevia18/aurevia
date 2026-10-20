@@ -1,10 +1,11 @@
 'use client';
 
-import {FormEvent,useCallback,useEffect,useMemo,useState} from 'react';
+import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import type {CSSProperties} from 'react';
 import {Area,AreaChart,CartesianGrid,Cell,Pie,PieChart,ResponsiveContainer,Tooltip,XAxis,YAxis} from 'recharts';
 import {ArrowDownLeft,ArrowUpRight,Bitcoin,Briefcase,BriefcaseBusiness,Building2,CircleDollarSign,Coins,FileClock,Gem,RefreshCw,TrendingUp} from 'lucide-react';
 import Link from 'next/link';
+import {useSession} from 'next-auth/react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import {useLocale} from '@/lib/i18n-context';
@@ -59,6 +60,8 @@ function ChartTooltip({active,payload,label}:ChartTooltipProps){
 }
 
 export default function PortfolioExperience(){
+	const {data:session,status:sessionStatus}=useSession();
+	const accountMode=session?.user?.accountMode;
 	const {translate}=useLocale();
 	const [data,setData]=useState<Portfolio|null>(null);
 	const [loading,setLoading]=useState(true);
@@ -70,17 +73,24 @@ export default function PortfolioExperience(){
 	const [resetOpen,setResetOpen]=useState(false);
 	const [resetConfirmation,setResetConfirmation]=useState('');
 	const [resetBusy,setResetBusy]=useState(false);
+	const latestRequest=useRef(0);
 	const load=useCallback(async(showLoading=false)=>{
+		const requestId=++latestRequest.current;
 		if(showLoading)setLoading(true);
 		try{
 			const response=await fetch('/api/portfolio',{cache:'no-store'});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to load portfolio.');
+			if(requestId!==latestRequest.current)return;
 			setData(result);setError('');
-		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to load portfolio.');}
-		finally{if(showLoading)setLoading(false);}
+		}catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:'Unable to load portfolio.');}
+		finally{if(requestId===latestRequest.current&&showLoading)setLoading(false);}
 	},[]);
-	useEffect(()=>{void load(true);},[load]);
+	useEffect(()=>{
+		if(sessionStatus!=='authenticated'||!accountMode)return;
+		setData(null);
+		void load(true);
+	},[accountMode,sessionStatus,load]);
 
 	const performance=useMemo(()=>{
 		const snapshots=filterPerformanceSnapshots(data?.performance||[],timeframe);

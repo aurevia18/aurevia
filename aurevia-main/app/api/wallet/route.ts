@@ -130,6 +130,9 @@ export async function POST(req:Request){
 		const transactionReference=btcDeposit?bitcoinTransactionId:parsed.transactionReference||null;
 
 		const result=await db.$transaction(async tx=>{
+			const activeUser=await tx.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true}});
+			if(!activeUser||activeUser.status!=='ACTIVE')throw new Error('WALLET_ACCOUNT_UNAVAILABLE');
+			if(activeUser.accountMode!==currentUser.accountMode)throw new Error('ACCOUNT_MODE_CHANGED');
 			const duplicate=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
 			if(duplicate){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==currentUser.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null||duplicate.transactionReference!==transactionReference)throw new Error('IDEMPOTENCY_KEY_REUSED');
@@ -139,11 +142,12 @@ export async function POST(req:Request){
 			if(parsed.type===FundingType.DEPOSIT){
 				const configured=await tx.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 				const address=configured?.value.trim()||'';
-				if(currentUser.accountMode==='REAL'&&!btcDeposit&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
+				if(!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
 				if(address&&!isBitcoinMainnetAddress(address))throw new Error('SIMULATED_BTC_ADDRESS_INVALID');
 				if(address){
 					if(parsed.simulatedBitcoinAddress!==address)throw new Error('SIMULATED_BTC_ADDRESS_CHANGED');
 					if(!parsed.simulatedBitcoinAddressAcknowledged)throw new Error('SIMULATED_BTC_ADDRESS_ACK_REQUIRED');
+					if(!receiptKey)throw new Error('SIMULATED_DEPOSIT_EVIDENCE_REQUIRED');
 					simulatedBitcoinAddressAcknowledged=true;
 				}
 			}
@@ -208,12 +212,16 @@ export async function POST(req:Request){
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_ACK_REQUIRED')return NextResponse.json({error:'Copy the configured Bitcoin address or confirm that you already have it before submitting this deposit.'},{status:400});
-		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'A simulated Bitcoin display address is not configured. Contact an administrator before requesting a REAL deposit.'},{status:503});
+		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'An administrator-configured Bitcoin reference address is not available. No crypto payment can be processed.'},{status:503});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_CHANGED')return NextResponse.json({error:'The simulated Bitcoin display address changed. Refresh the wallet and confirm the current address.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_INVALID')return NextResponse.json({error:'The administrator-configured simulated Bitcoin display address is invalid. Contact support.'},{status:503});
+		if(error instanceof Error&&error.message==='SIMULATED_DEPOSIT_EVIDENCE_REQUIRED')return NextResponse.json({error:'Attach a receipt for administrator review before submitting this request.'},{status:400});
 		if(error instanceof Error&&error.message==='BTC_TRANSACTION_ID_INVALID')return NextResponse.json({error:'Enter a valid 64-character Bitcoin transaction ID or leave it blank.'},{status:400});
 		if(error instanceof Error&&error.message==='INVALID_BTC_AMOUNT')return NextResponse.json({error:'Enter a positive BTC amount with at most 8 decimal places.'},{status:400});
 		if(error instanceof Error&&error.message==='BTC_REAL_DEPOSIT_ONLY')return NextResponse.json({error:'BTC amounts are accepted only for REAL deposit requests.'},{status:400});
+		if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the request again.'},{status:409});
+		if(error instanceof Error&&error.message==='WALLET_ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'Wallet account is unavailable.'},{status:403});
+		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this request. Refresh and try again.'},{status:409});
 		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
 		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';

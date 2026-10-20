@@ -49,10 +49,11 @@ export async function POST(request:Request){
     return {investment:prior,replay:true};
    }
    const [profile,opportunity]=await Promise.all([
-    tx.user.findUnique({where:{id:user.id},select:{status:true,accountRestricted:true,approvedTier:true}}),
+   tx.user.findUnique({where:{id:user.id},select:{status:true,role:true,accountMode:true,accountRestricted:true,approvedTier:true}}),
     tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
    ]);
-   if(!profile||profile.status!=='ACTIVE')throw new Error('INVESTMENT_USER_UNAVAILABLE');
+   if(!profile||profile.status!=='ACTIVE'||profile.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
+   if(profile.accountMode!==user.accountMode)throw new Error('ACCOUNT_MODE_CHANGED');
    if(profile.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
    if(user.accountMode===AccountMode.DEMO&&!opportunity.demoEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
@@ -93,6 +94,7 @@ export async function POST(request:Request){
  }catch(error){
   if(error instanceof ZodError)return NextResponse.json({error:'Enter an amount within the opportunity limits.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+  if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the allocation again.'},{status:409});
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_MATURED','INVESTMENT_USER_UNAVAILABLE','INVESTMENT_USER_RESTRICTED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
   if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_AMOUNT'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2002')return NextResponse.json({error:'This investment request was already received.'},{status:409});

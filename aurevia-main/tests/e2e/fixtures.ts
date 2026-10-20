@@ -22,15 +22,16 @@ export async function waitForStartup(page:Page){
 export async function loginAs(page:Page,email:string,password:string){
 	const loginIp=isolatedLoginIp();
 	const addIsolatedLoginIp=(route:import('@playwright/test').Route)=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':loginIp}});
+	const administrator=email.toLowerCase()===process.env.AUREVIA_E2E_ADMIN_EMAIL?.toLowerCase();
 	await page.route(credentialCallback,addIsolatedLoginIp);
 	try{
-		await page.goto('/login');
+		await page.goto(administrator?'/admin/login':'/login');
 		await waitForStartup(page);
-		await page.getByLabel('Email or administrator username').fill(email);
-		await page.getByLabel('Password',{exact:true}).fill(password);
-		await page.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
-		await page.getByRole('button',{name:'Sign in'}).click();
-		await page.waitForURL(/dashboard/);
+		await page.getByLabel(administrator?'Admin username or email':'Email or administrator username').fill(email);
+		await page.getByLabel(administrator?'Admin password':'Password',{exact:true}).fill(password);
+		await page.getByRole('checkbox',{name:administrator?/Replace another active Aurevia session/:/Replace the active Aurevia session/}).check();
+		await page.getByRole('button',{name:administrator?'Enter control center':'Sign in'}).click();
+		await page.waitForURL(administrator?/\/admin(?:$|\/)/:/dashboard/);
 		await expect.poll(async()=>{
 			const response=await page.request.get('/api/auth/session');
 			if(!response.ok())return null;

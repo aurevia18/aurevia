@@ -166,9 +166,7 @@ export default function Trade() {
       });
       const result = await response.json();
       setMsg(response.ok
-        ? accountMode==='REAL'
-          ? `Alpaca Paper order ${String(result.providerStatus||result.status||'submitted').replaceAll('_',' ')}. Aurevia REAL balances and positions were not changed.`
-          : "Simulated order accepted"
+        ? `${accountMode} simulated order ${String(result.status||'accepted').replaceAll('_',' ').toLowerCase()}.`
         : result.error || "Order failed");
       if (response.ok) {
         setOrders((current) => [result, ...current]);
@@ -209,9 +207,8 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='REAL'?'REAL-side orders are sent to the shared Alpaca Paper account; paper fills never change Aurevia REAL balances or positions.':'DEMO orders use Aurevia virtual balances and simulated execution.'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL · PAPER / SIMULATED':'DEMO · SIMULATED'}</span></header>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='LOADING'?'Loading your active paper account.':`${accountMode} orders use your separate Aurevia paper balance and simulated execution.`}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':`${accountMode} · SIMULATED`}</span></header>
         {(accountMode==='REAL'||accountMode==='DEMO')?<>
-        {accountMode==='REAL'&&<div className="account-callout mb-4" role="status"><span>Paper order requests use the shared Alpaca Paper account. Aurevia REAL balances and internal positions remain separate and are not changed by paper orders. The chart price is Aurevia’s indicative simulated price; Alpaca determines paper execution price. No live brokerage, deposits, withdrawals, or money movement are enabled.</span></div>}
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">
             <div className="trade-market-select" role="group" aria-label={translate('selectAnInstrument')}>
@@ -274,7 +271,7 @@ export default function Trade() {
             </div>
           </section>
           <section className="card p-5">
-            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Alpaca Paper order request · indicative price only':'Simulated order estimate'}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='REAL'?'PAPER · SIMULATED':'DEMO · SIMULATED'}</span></div>
+            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{accountMode} paper order · simulated price and execution</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode} · SIMULATED</span></div>
             <form onSubmit={place} className="space-y-3">
               <fieldset className="space-y-3">
               <div className="grid grid-cols-2 gap-2" role="group" aria-label={translate('orderSide')}>
@@ -294,8 +291,8 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP">Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite">{accountMode==='REAL'?<div><span>Aurevia REAL ledger balance (not Alpaca buying power)</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>:<div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div>}<div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
-              <p className="trade-estimate-note">{accountMode==='REAL'?'Estimate uses Aurevia’s simulated quote and fee schedule. Alpaca Paper validates orders and reports its own fill; no paper amounts enter the Aurevia ledger.':'DEMO orders use simulated execution and do not reach an external broker or exchange.'}</p>
+              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
+              <p className="trade-estimate-note">Quotes, order matching, positions, and P/L are simulated and isolated to this {accountMode} account. No order is sent to an external broker or exchange.</p>
               <button type="submit" disabled={placing||!selected} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>
               {msg&&<p className="text-sm muted" role="status">{msg}</p>}
@@ -325,7 +322,7 @@ export default function Trade() {
           </section>
         </div>
         <section className="card mt-4 p-5">
-          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{accountMode==='REAL'?'Aurevia internal simulated positions; separate from Alpaca Paper.':translate('unrealizedPnl')}</p></div><span className="status-pill">{positions.length} open</span></div>
+          <div className="account-panel-title"><div><h2>{translate('openPositions')}</h2><p className="account-panel-subtitle">{translate('unrealizedPnl')} · {accountMode} simulated positions</p></div><span className="status-pill">{positions.length} open</span></div>
           {positions.length ? (
             <div className="mt-3 space-y-2">
               {positions.map((p) => (

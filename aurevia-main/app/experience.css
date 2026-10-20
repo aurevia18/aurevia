@@ -1585,3 +1585,10 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
   .portfolio-footer-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
   .portfolio-footer-summary article:last-child{grid-column:1/-1}
 }
+
+:root{--color-gold:var(--a-brass)}
+.gold{color:var(--a-brass-soft)}
+.bg-gold{background-color:var(--a-brass)!important;color:#08120d!important}
+.border-gold\/30{border-color:rgba(0,230,118,.3)}
+.input:focus{border-color:var(--a-brass);box-shadow:0 0 0 3px rgba(0,230,118,.12)}
+.auth-register-card .auth-submit,.floating-support-new .button-primary,.floating-support-compose .button-primary,.floating-support-guest .button-primary{background:var(--a-brass);color:#08120d}

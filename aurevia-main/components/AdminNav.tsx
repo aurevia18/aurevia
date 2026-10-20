@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import {signOut,useSession} from 'next-auth/react';
 import {usePathname} from 'next/navigation';
-import {ArrowLeft,BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,ShieldCheck,SlidersHorizontal,Trash2,UsersRound,X} from 'lucide-react';
+import {BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,ShieldCheck,SlidersHorizontal,Trash2,UsersRound,X} from 'lucide-react';
 import {useEffect,useState} from 'react';
 
 const groups=[
@@ -70,7 +70,6 @@ export default function AdminNav(){
 				</section>)}</div>:<p className="admin-nav-loading">Administrator access required</p>}
 			</nav>
 			<div className="admin-nav-actions">
-				{isAdmin&&<Link className="admin-nav-return" href="/dashboard" aria-label="Return to user dashboard"><ArrowLeft size={15}/><span>User portal</span></Link>}
 				<button className="admin-menu-button" type="button" aria-label={open?'Close admin menu':'Open admin menu'} aria-expanded={open} aria-controls="admin-navigation" onClick={()=>setOpen(value=>!value)}>{open?<X size={19}/>:<Menu size={19}/>}</button>
 				{isAdmin&&<button className="admin-nav-logout" type="button" disabled={loggingOut} aria-busy={loggingOut} onClick={()=>void logout()}><LogOut size={15}/><span>{loggingOut?'Signing out…':'Logout'}</span></button>}
 			</div>

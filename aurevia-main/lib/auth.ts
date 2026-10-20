@@ -1,3 +1,16 @@
-import {getServerSession} from 'next-auth'; import {authOptions} from '@/lib/auth-options';
-export async function requireUser(){const s=await getServerSession(authOptions); if(!s?.user?.id) throw new Error('UNAUTHORIZED'); return s.user;}
-export async function requireAdmin(){const u=await requireUser(); if(u.role!=='ADMIN') throw new Error('FORBIDDEN'); return u;}
+import {getServerSession} from 'next-auth';
+import {authOptions} from '@/lib/auth-options';
+
+export async function requireUser(){
+	const session=await getServerSession(authOptions);
+	if(!session?.user?.id)throw new Error('UNAUTHORIZED');
+	if(session.user.role!=='USER')throw new Error('FORBIDDEN');
+	return session.user;
+}
+
+export async function requireAdmin(){
+	const session=await getServerSession(authOptions);
+	if(!session?.user?.id)throw new Error('UNAUTHORIZED');
+	if(session.user.role!=='ADMIN')throw new Error('FORBIDDEN');
+	return session.user;
+}

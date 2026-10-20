@@ -1,6 +1,6 @@
 'use client';
 
-import {useCallback,useEffect,useState} from 'react';
+import {useCallback,useEffect,useRef,useState} from 'react';
 import {useSession} from 'next-auth/react';
 import {RefreshCw,X} from 'lucide-react';
 import Nav from '@/components/Nav';
@@ -16,14 +16,24 @@ export default function OrdersExperience(){
  const {data:session}=useSession();
  const {translate}=useLocale();
  const [orders,setOrders]=useState<Order[]>([]);const [filter,setFilter]=useState<Filter>('ALL');const [loading,setLoading]=useState(true);const [busy,setBusy]=useState('');const [error,setError]=useState('');
- const load=useCallback(async(showLoading=false)=>{if(showLoading)setLoading(true);try{const response=await fetch('/api/orders',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load orders.');setOrders(result);setError('');}catch(exception){setError(exception instanceof Error?exception.message:'Unable to load orders.');}finally{if(showLoading)setLoading(false);}},[]);
- useEffect(()=>{void load(true);},[load]);
+ const latestRequest=useRef(0);
+ const load=useCallback(async(showLoading=false)=>{
+  const requestId=++latestRequest.current;
+  if(showLoading)setLoading(true);
+  try{
+   const response=await fetch('/api/orders',{cache:'no-store'});
+   const result=await response.json();
+   if(!response.ok)throw new Error(result.error||'Unable to load orders.');
+   if(requestId===latestRequest.current){setOrders(result);setError('');}
+  }catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:'Unable to load orders.');}
+  finally{if(requestId===latestRequest.current)setLoading(false);}
+ },[]);
+ useEffect(()=>{setOrders([]);void load(true);},[load,session?.user?.accountMode]);
  async function cancel(orderId:string){if(busy)return;setBusy(orderId);setError('');try{const response=await fetch('/api/orders',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({orderId})});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to cancel order.');await load();}catch(exception){setError(exception instanceof Error?exception.message:'Unable to cancel order.');}finally{setBusy('');}}
  const visible=orders.filter(order=>filter==='ALL'||order.status===filter);
 
  return <><Nav/><main className="account-page orders-page">
   <header className="account-heading"><div><span className="account-kicker">{translate('orderActivity')}</span><h1>{translate('ordersTitle')}</h1><p>{translate('orderSubtitle')}</p></div><div className="flex items-center gap-2"><span className={`status-pill ${session?.user?.accountMode==='REAL'?'mode-real':'mode-demo'}`}>{translate('accountOrderMode',{mode:session?.user?.accountMode||'ACCOUNT'})}</span><button className="icon-action" type="button" aria-label={translate('refreshOrders')} onClick={()=>void load(true)}><RefreshCw size={15}/></button></div></header>
-  {session?.user?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL-side orders are PAPER / SIMULATED through the shared Alpaca Paper account. Paper fills never change Aurevia REAL balances or internal positions.</span></div>}
   {error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>{translate('retry')}</button></div>}
   <section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('orderHistory')}</h2><p className="account-panel-subtitle">{translate('orderHistorySubtitle')}</p></div><div className="orders-filters" role="group" aria-label={translate('filterOrders')}>{filters.map(item=><button key={item} type="button" aria-pressed={filter===item} className={filter===item?'is-active':''} onClick={()=>setFilter(item)}>{item}</button>)}</div></div>
    {loading&&!orders.length?<p className="account-empty" role="status">{translate('loadingOrderHistory')}</p>:visible.length?<div className="orders-list">{visible.map(order=><article className="orders-row" key={order.id}><div className="orders-main"><span className={`market-side is-${order.side.toLowerCase()}`}>{order.side}</span><div><b>{order.instrument.symbol}</b><span>{order.type} · {Number(order.filledQuantity).toLocaleString()} / {Number(order.quantity).toLocaleString()} units</span><small>{new Date(order.providerUpdatedAt||order.createdAt).toLocaleString()}</small></div></div><div><span className={`status-pill ${order.accountMode==='DEMO'?'mode-demo':'mode-real'}`}>{order.providerName==='alpaca-paper'?'REAL · PAPER / SIMULATED':`${order.accountMode} · SIMULATED`}</span><small>{order.providerStatus||order.status.replaceAll('_',' ')}</small></div><div><b>{order.averageFillPrice?money(order.averageFillPrice):money(order.price||order.stopPrice)}</b><small>{order.providerName==='alpaca-paper'?'Paper fill only · no ledger entry':`Fee ${money(order.fee)}`}</small></div><div className="orders-executions">{order.executions.map((execution,index)=><span key={`${execution.createdAt}-${index}`}>{Number(execution.quantity).toLocaleString()} @ {money(execution.price)} · {new Date(execution.createdAt).toLocaleTimeString()}</span>)}</div>{(order.status==='OPEN'||order.status==='PARTIALLY_FILLED')&&<button className="icon-action" type="button" aria-label={translate('cancelOrder',{symbol:order.instrument.symbol})} disabled={busy===order.id} onClick={()=>void cancel(order.id)}><X size={15}/></button>}</article>)}</div>:<p className="account-empty">{orders.length?translate('noOrdersMatch'):translate('noOrdersRecorded')}</p>}

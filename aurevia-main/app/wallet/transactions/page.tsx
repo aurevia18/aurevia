@@ -1,6 +1,6 @@
 'use client';
 
-import {useCallback,useEffect,useState} from 'react';
+import {useCallback,useEffect,useRef,useState} from 'react';
 import Link from 'next/link';
 import {useSession} from 'next-auth/react';
 import {ArrowDownLeft,ArrowLeft,ArrowUpRight,RefreshCw,WalletCards} from 'lucide-react';
@@ -22,13 +22,15 @@ export default function TransactionsPage(){
 	const [filter,setFilter]=useState<Filter>('ALL');
 	const [loading,setLoading]=useState(true);
 	const [error,setError]=useState('');
+	const latestRequest=useRef(0);
 
 	const load=useCallback(async()=>{
+		const requestId=++latestRequest.current;
 		setLoading(true);setError('');
 		setData(null);
-		try{const response=await fetch('/api/wallet',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction history.');setData(result)}
-		catch(exception){setError(exception instanceof Error?exception.message:'Unable to load transaction history.')}
-		finally{setLoading(false)}
+		try{const response=await fetch('/api/wallet',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to load transaction history.');if(requestId===latestRequest.current)setData(result)}
+		catch(exception){if(requestId===latestRequest.current)setError(exception instanceof Error?exception.message:'Unable to load transaction history.')}
+		finally{if(requestId===latestRequest.current)setLoading(false)}
 	},[]);
 	useEffect(()=>{if(sessionStatus==='authenticated')void load()},[load,sessionStatus,activeMode]);
 	const transactions=data?.transactions.filter(item=>filter==='ALL'||item.type===filter)||[];

@@ -8,8 +8,9 @@ async function main(){
  if(!email||!password||!username)throw new Error('Set ADMIN_USERNAME, ADMIN_EMAIL, and ADMIN_PASSWORD before seeding the administrator.');
  if(password.length<12)throw new Error('ADMIN_PASSWORD must contain at least 12 characters.');
  const hash=await bcrypt.hash(password,12);
- const existingUser=await db.user.findUnique({where:{email},select:{id:true}});
+ const existingUser=await db.user.findUnique({where:{email},select:{id:true,role:true}});
  const existingAdmin=await db.user.findFirst({where:{role:Role.ADMIN},select:{id:true}});
+ if(existingUser&&existingUser.role!==Role.ADMIN)throw new Error('ADMIN_EMAIL belongs to a customer account; use a dedicated administrator account.');
  if(existingUser&&existingAdmin&&existingUser.id!==existingAdmin.id)throw new Error('ADMIN_EMAIL belongs to a different account while an administrator already exists; refusing to create a duplicate administrator.');
  const admin=existingUser
   ?await db.user.update({where:{id:existingUser.id},data:{passwordHash:hash,role:Role.ADMIN,status:UserStatus.ACTIVE,name:username}})
@@ -33,6 +34,7 @@ main().catch(error=>{
   error.message.startsWith('Set ADMIN_USERNAME')||
   error.message==='ADMIN_PASSWORD must contain at least 12 characters.'||
   error.message.startsWith('ADMIN_EMAIL belongs to a different account')
+  ||error.message.startsWith('ADMIN_EMAIL belongs to a customer account')
  ))console.error(error.message);
  else if(error&&typeof error==='object'&&'code' in error)console.error(`Database seed failed with error code ${String(error.code)}.`);
  else console.error('Database seed failed. Check database connectivity and required environment variables.');

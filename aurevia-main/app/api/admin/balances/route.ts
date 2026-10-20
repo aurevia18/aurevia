@@ -29,8 +29,8 @@ export async function POST(request:Request){
 		const result=await db.$transaction(async tx=>{
 			const prior=await tx.ledgerTransaction.findUnique({where:{reference},include:{entries:{include:{account:{select:{userId:true,accountMode:true,currency:true}}}}}});
 			if(prior){
-				if(prior.description!==description||!prior.entries.some(entry=>entry.account.userId===input.userId&&entry.account.accountMode===input.accountMode&&entry.account.currency===input.currency&&entry.amount.eq(amount)&&entry.type===(input.direction==='CREDIT'?EntryType.CREDIT:EntryType.DEBIT)))throw new Error('IDEMPOTENCY_KEY_REUSED');
-				return {reference,transactionId:prior.id,replayed:true};
+				if(prior.description!==description||prior.accountMode!==input.accountMode||!prior.entries.some(entry=>entry.account.userId===input.userId&&entry.account.accountMode===input.accountMode&&entry.account.currency===input.currency&&entry.amount.eq(amount)&&entry.type===(input.direction==='CREDIT'?EntryType.CREDIT:EntryType.DEBIT)))throw new Error('IDEMPOTENCY_KEY_REUSED');
+				return {reference,transactionId:prior.id,createdAt:prior.createdAt.toISOString(),replayed:true};
 			}
 			const customer=await tx.user.findUnique({where:{id:input.userId},select:{id:true,role:true,status:true}});
 			if(!customer||customer.role!=='USER')throw new Error('CUSTOMER_ACCOUNT_REQUIRED');
@@ -42,11 +42,11 @@ export async function POST(request:Request){
 			const offset=await ensureSystemAccount(tx,`SYSTEM:ADMIN:${input.accountMode}:${input.currency}`,`Administrator ${input.accountMode} adjustment clearing`,input.currency,input.accountMode);
 			const debitAccount=input.direction==='CREDIT'?offset:account;
 			const creditAccount=input.direction==='CREDIT'?account:offset;
-			const transaction=await tx.ledgerTransaction.create({data:{reference,description,entries:{create:[{account:{connect:{id:debitAccount.id}},type:EntryType.DEBIT,amount},{account:{connect:{id:creditAccount.id}},type:EntryType.CREDIT,amount}]}}});
+			const transaction=await tx.ledgerTransaction.create({data:{reference,description,accountMode:input.accountMode,entries:{create:[{account:{connect:{id:debitAccount.id}},accountMode:input.accountMode,type:EntryType.DEBIT,amount},{account:{connect:{id:creditAccount.id}},accountMode:input.accountMode,type:EntryType.CREDIT,amount}]}}});
 			const availableAfter=await balance(tx,account.id);
 			await tx.auditLog.create({data:{actorId:admin.id,action:`ADMIN_ACCOUNT_${input.direction}`,entity:'LEDGER_TRANSACTION',entityId:transaction.id,metadata:{userId:customer.id,accountMode:input.accountMode,currency:input.currency,amount:amount.toString(),category:input.category,reason:input.reason,reference,previousBalance:availableBefore.toString(),newBalance:availableAfter.toString(),administrativeRealAllocation:input.accountMode===AccountMode.REAL}}});
 			await createNotification(tx,{userId:customer.id,type:NotificationType.ACCOUNT,title:`${input.accountMode} account ${input.direction.toLowerCase()} recorded`,message:`An administrator recorded a ${input.direction.toLowerCase()} of ${amount.toFixed(2)} ${input.currency} in your ${input.accountMode} account (${input.category}). Reason: ${input.reason}. Reference: ${reference}.${input.accountMode===AccountMode.REAL?' These are simulated ledger funds; no external payment or asset transfer occurred.':' This is virtual simulated account activity.'}`,dedupeKey:`admin-ledger:${reference}`,relatedEntity:'LEDGER_TRANSACTION',relatedId:transaction.id,actionUrl:'/wallet/transactions'});
-			return {reference,transactionId:transaction.id,replayed:false,previousBalance:availableBefore.toString(),newBalance:availableAfter.toString()};
+			return {reference,transactionId:transaction.id,createdAt:transaction.createdAt.toISOString(),replayed:false,previousBalance:availableBefore.toString(),newBalance:availableAfter.toString()};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		return NextResponse.json(result,{status:result.replayed?200:201,headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

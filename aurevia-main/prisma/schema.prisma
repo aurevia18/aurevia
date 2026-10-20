@@ -383,34 +383,34 @@ model Candle {
 }
 
 model Order {
-  id                   String      @id @default(cuid())
-  userId               String
-  instrumentId         String
-  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  instrument           Instrument  @relation(fields: [instrumentId], references: [id])
-  side                 OrderSide
-  type                 OrderType
-  status               OrderStatus @default(OPEN)
-  accountMode          AccountMode @default(DEMO)
-  quantity             Decimal     @db.Decimal(30, 10)
-  filledQuantity       Decimal     @default(0) @db.Decimal(30, 10)
-  price                Decimal?    @db.Decimal(30, 10)
-  stopPrice            Decimal?    @db.Decimal(30, 10)
-  averageFillPrice     Decimal?    @db.Decimal(30, 10)
-  fee                  Decimal     @default(0) @db.Decimal(30, 10)
-  idempotencyKey       String?     @unique
-  providerName         String?
-  providerAccountId    String?
-  providerOrderId      String?     @unique
-  providerStatus       String?
-  providerAcceptedAt   DateTime?
-  providerUpdatedAt    DateTime?
-  providerReservedAmount Decimal? @db.Decimal(30, 10)
-  reconciliationStatus String?
-  reconciledAt         DateTime?
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
-  executions           Execution[]
+  id                     String      @id @default(cuid())
+  userId                 String
+  instrumentId           String
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument             Instrument  @relation(fields: [instrumentId], references: [id])
+  side                   OrderSide
+  type                   OrderType
+  status                 OrderStatus @default(OPEN)
+  accountMode            AccountMode @default(DEMO)
+  quantity               Decimal     @db.Decimal(30, 10)
+  filledQuantity         Decimal     @default(0) @db.Decimal(30, 10)
+  price                  Decimal?    @db.Decimal(30, 10)
+  stopPrice              Decimal?    @db.Decimal(30, 10)
+  averageFillPrice       Decimal?    @db.Decimal(30, 10)
+  fee                    Decimal     @default(0) @db.Decimal(30, 10)
+  idempotencyKey         String?     @unique
+  providerName           String?
+  providerAccountId      String?
+  providerOrderId        String?     @unique
+  providerStatus         String?
+  providerAcceptedAt     DateTime?
+  providerUpdatedAt      DateTime?
+  providerReservedAmount Decimal?    @db.Decimal(30, 10)
+  reconciliationStatus   String?
+  reconciledAt           DateTime?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+  executions             Execution[]
 
   @@index([userId, status])
   @@index([userId, instrumentId, accountMode, side, status])
@@ -418,14 +418,17 @@ model Order {
 }
 
 model Execution {
-  id                  String   @id @default(cuid())
+  id                  String      @id @default(cuid())
   orderId             String
-  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  quantity            Decimal  @db.Decimal(30, 10)
-  price               Decimal  @db.Decimal(30, 10)
-  fee                 Decimal  @db.Decimal(30, 10)
-  providerExecutionId String?  @unique
-  createdAt           DateTime @default(now())
+  order               Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  accountMode         AccountMode @default(DEMO)
+  quantity            Decimal     @db.Decimal(30, 10)
+  price               Decimal     @db.Decimal(30, 10)
+  fee                 Decimal     @db.Decimal(30, 10)
+  providerExecutionId String?     @unique
+  createdAt           DateTime    @default(now())
+
+  @@index([accountMode, createdAt])
 }
 
 model Position {
@@ -479,14 +482,18 @@ model LedgerTransaction {
   id          String        @id @default(cuid())
   reference   String        @unique
   description String
+  accountMode AccountMode   @default(DEMO)
   createdAt   DateTime      @default(now())
   entries     LedgerEntry[]
+
+  @@index([accountMode, createdAt])
 }
 
 model LedgerEntry {
   id            String            @id @default(cuid())
   transactionId String
   accountId     String
+  accountMode   AccountMode       @default(DEMO)
   type          EntryType
   amount        Decimal           @db.Decimal(30, 10)
   transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
@@ -494,6 +501,7 @@ model LedgerEntry {
   createdAt     DateTime          @default(now())
 
   @@index([accountId, createdAt])
+  @@index([accountMode, createdAt])
 }
 
 model FundingRequest {

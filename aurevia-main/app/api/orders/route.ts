@@ -7,8 +7,7 @@ import {jsonSafe} from '@/lib/serializers';
 import {NotificationType} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
 import {AccountMode} from '@prisma/client';
-import {submitAlpacaPaperOrder,cancelAlpacaPaperOrder,ALPACA_PAPER_PROVIDER,AlpacaPaperOrderError} from '@/lib/alpaca-paper-orders';
-import {rateLimit} from '@/lib/rate-limit';
+import {cancelAlpacaPaperOrder,ALPACA_PAPER_PROVIDER,AlpacaPaperOrderError} from '@/lib/alpaca-paper-orders';
 
 const schema=z.object({instrumentId:z.string().min(1),side:z.enum(['BUY','SELL']),type:z.enum(['MARKET','LIMIT','STOP']),quantity:z.number().positive().max(1_000_000_000),price:z.number().positive().optional(),stopPrice:z.number().positive().optional(),expectedPrice:z.number().positive(),observedAt:z.string().datetime()});
 export async function GET(){
@@ -28,18 +27,15 @@ export async function POST(request:Request){
 		if(!/^[a-zA-Z0-9_-]{12,48}$/.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
 		const currentUser=await db.user.findUnique({where:{id:user.id},select:{accountMode:true,status:true,role:true}});
 		if(!currentUser||currentUser.status!=='ACTIVE'||currentUser.role!=='USER')return NextResponse.json({error:'This account cannot submit orders.'},{status:403});
-		if(currentUser.accountMode===AccountMode.DEMO){
-			const order=await placeOrder(user.id,currentUser.accountMode,input,idempotencyKey);
-			return NextResponse.json(jsonSafe(order),{status:201});
-		}
-		rateLimit(`alpaca-paper-order:${user.id}`,20,60_000);
-		const order=await submitAlpacaPaperOrder(user.id,input,idempotencyKey);
-		const pending=order.providerStatus==='SUBMISSION_PENDING'||order.providerStatus==='SUBMISSION_UNKNOWN';
-		return NextResponse.json(jsonSafe(order),{status:pending?202:201,headers:{'Cache-Control':'private, no-store'}});
+		const order=await placeOrder(user.id,currentUser.accountMode,input,idempotencyKey);
+		return NextResponse.json(jsonSafe(order),{status:201});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:error.issues[0]?.message||'Invalid order.'},{status:400});
 		if(error instanceof AlpacaPaperOrderError)return NextResponse.json({error:paperOrderMessage(error.code)},{status:error.httpStatus});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Paper order requests are temporarily limited.'},{status:429});
+		if(error instanceof Error&&error.message==='ACCOUNT_MODE_CHANGED')return NextResponse.json({error:'Your active account mode changed. Refresh and submit the order again.'},{status:409});
+		if(error instanceof Error&&error.message==='ORDER_ACCOUNT_UNAVAILABLE')return NextResponse.json({error:'This account cannot submit orders.'},{status:403});
+		if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed while submitting this order. Refresh and try again.'},{status:409});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='IDEMPOTENCY_KEY_REUSED')return NextResponse.json({error:'This request key was already used for a different order.'},{status:409});
 		return NextResponse.json({error:error instanceof Error?error.message:'Order rejected'},{status:400});
